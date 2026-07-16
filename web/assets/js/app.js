@@ -176,6 +176,9 @@ function handleResponse(response) {
   if (response?.code === 'DATA_CONFLICT') {
     return show('conflict', '<h2 tabindex="-1">資料需要確認</h2><p>請洽現場工作人員協助。</p>');
   }
+  if (response?.code === 'CAPACITY_REACHED') {
+    return show('full', '<h2 tabindex="-1">現場名額已滿</h2><p>請洽現場工作人員協助。</p>');
+  }
   if (response?.code === 'TOKEN_EXPIRED') {
     return state.phoneSuffix ? renderPhone() : renderEmail();
   }

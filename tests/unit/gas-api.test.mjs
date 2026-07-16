@@ -49,8 +49,9 @@ function createApiHarness(options = {}) {
       if (options.readError) throw options.readError;
       return attendees.get(row);
     },
-    confirmRow_: row => {
+    confirmRow_: (row, identityHash) => {
       state.confirms += 1;
+      state.lastConfirmation = { row, identityHash };
       if (options.confirmResult) return options.confirmResult;
       return { code: 'CHECKED_IN', checkedInAt: new Date('2026-08-03T06:00:00Z'), row };
     },
@@ -89,7 +90,10 @@ test('lookup returns only maskedName and an opaque hashed-cache token', () => {
   assert.equal(state.puts[0].ttl, 300);
   const cached = JSON.parse(state.puts[0].value);
   assert.equal(cached.row, 2);
+  assert.equal(cached.identityHash, hash('attendee:0912345678\nlin@example.com'));
   assert.equal(typeof cached.issuedAt, 'number');
+  assert.equal(JSON.stringify(cached).includes('0912345678'), false);
+  assert.equal(JSON.stringify(cached).includes('lin@example.com'), false);
   assert.equal(state.puts[0].key.includes('opaque-1opaque-2'), false);
 });
 
@@ -125,12 +129,14 @@ test('successful and already-confirmed tokens are removed and cannot replay', ()
   for (const code of ['CHECKED_IN', 'ALREADY_CHECKED_IN']) {
     const { gas, state } = createApiHarness({ confirmResult: { code, checkedInAt: new Date('2026-08-03T06:00:00Z'), row: 2 } });
     const token = `${code}-token`;
-    state.cache.set(`token:${hash(token)}`, JSON.stringify({ row: 2, issuedAt: Date.now() }));
+    const identityHash = hash('attendee:0912345678\nlin@example.com');
+    state.cache.set(`token:${hash(token)}`, JSON.stringify({ row: 2, identityHash, issuedAt: Date.now() }));
     const first = gas.apiConfirmCheckIn(request('c1', { token }));
     const replay = gas.apiConfirmCheckIn(request('c2', { token }));
     assert.equal(first.code, code);
     assert.equal(replay.code, 'TOKEN_EXPIRED');
     assert.deepEqual(state.removed, [`token:${hash(token)}`]);
+    assert.deepEqual(state.lastConfirmation, { row: 2, identityHash });
     assertSanitized(first);
   }
 });
@@ -138,7 +144,8 @@ test('successful and already-confirmed tokens are removed and cannot replay', ()
 test('BUSY leaves the same token valid for retry and expired or malformed tokens do not confirm', () => {
   const { gas, state } = createApiHarness({ confirmResult: { code: 'BUSY' } });
   const token = 'retry-token';
-  state.cache.set(`token:${hash(token)}`, JSON.stringify({ row: 2, issuedAt: Date.now() }));
+  const identityHash = hash('attendee:0912345678\nlin@example.com');
+  state.cache.set(`token:${hash(token)}`, JSON.stringify({ row: 2, identityHash, issuedAt: Date.now() }));
   assert.equal(gas.apiConfirmCheckIn(request('c1', { token })).code, 'BUSY');
   assert.equal(gas.apiConfirmCheckIn(request('c2', { token })).code, 'BUSY');
   assert.equal(state.removed.length, 0);
@@ -146,6 +153,8 @@ test('BUSY leaves the same token valid for retry and expired or malformed tokens
   assert.equal(gas.apiConfirmCheckIn(request('c3', { token: 'expired' })).code, 'TOKEN_EXPIRED');
   state.cache.set(`token:${hash('malformed')}`, '{bad');
   assert.equal(gas.apiConfirmCheckIn(request('c4', { token: 'malformed' })).code, 'TOKEN_EXPIRED');
+  state.cache.set(`token:${hash('legacy-row-only')}`, JSON.stringify({ row: 2, issuedAt: Date.now() }));
+  assert.equal(gas.apiConfirmCheckIn(request('c5', { token: 'legacy-row-only' })).code, 'TOKEN_EXPIRED');
 });
 
 test('walk-in validates release gates and maps repository outcomes without identity leakage', () => {
@@ -166,6 +175,9 @@ test('walk-in validates release gates and maps repository outcomes without ident
 
   const conflict = createApiHarness({ registerResult: { code: 'DATA_CONFLICT' } });
   assert.equal(conflict.gas.apiRegisterWalkIn(request('w3', { name: '陳來賓', phone: '0922334455', email: 'walkin@example.com', consent: true })).code, 'DATA_CONFLICT');
+
+  const full = createApiHarness({ registerResult: { code: 'CAPACITY_REACHED' } });
+  assert.equal(full.gas.apiRegisterWalkIn(request('w4', { name: '陳來賓', phone: '0922334455', email: 'walkin@example.com', consent: true })).code, 'CAPACITY_REACHED');
 });
 
 test('health check exposes only release state, version, and server time', () => {

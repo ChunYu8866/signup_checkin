@@ -229,6 +229,7 @@ test('token expiry preserves phone input and the rebound form can query again', 
 for (const { code, heading, data = {} } of [
   { code: 'ALREADY_CHECKED_IN', heading: '您已完成報到', data: { checkedInAt: '2026/08/03 13:40' } },
   { code: 'DATA_CONFLICT', heading: '資料需要確認' },
+  { code: 'CAPACITY_REACHED', heading: '現場名額已滿' },
 ]) {
   test(`${code} renders its safe terminal state`, async ({ page }) => {
     await page.goto('/');

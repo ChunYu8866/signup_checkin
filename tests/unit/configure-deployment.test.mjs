@@ -41,11 +41,11 @@ test('rejects non-https, non-exec, credentialed, query, and unapproved release v
   ]) assert.throws(() => renderConfig({ ...base, ...overrides }));
 });
 
-function operationsHarness({ headers, sheetZone = 'Asia/Taipei', scriptZone = 'Asia/Taipei', origins = ['https://owner.github.io'] } = {}) {
+function operationsHarness({ headers, attendeeRows = 2, sheetZone = 'Asia/Taipei', scriptZone = 'Asia/Taipei', origins = ['https://owner.github.io'] } = {}) {
   const expected = ['姓名', '手機', 'E-mail', '報名類型', '報到狀態', '報到時間', '資料建立時間'];
   const state = { headers: [...(headers ?? expected)], writes: [], frozen: [], rebuilds: [], invalidations: 0, generation: 'old-generation', validationCalls: 0, events: [] };
   const sheet = {
-    getLastRow: () => 3,
+    getLastRow: () => attendeeRows + 1,
     getRange: () => ({
       getDisplayValues: () => [[...state.headers]],
       setValues(values) { state.writes.push(values); state.headers = [...values[0]]; },
@@ -91,6 +91,12 @@ test('validateDeployment requires both Taipei zones, exact headers, and at least
   assert.throws(() => operationsHarness({ sheetZone: 'UTC' }).gas.validateDeployment(), /SHEET_TIME_ZONE_MUST_BE_ASIA_TAIPEI/);
   assert.throws(() => operationsHarness({ scriptZone: 'UTC' }).gas.validateDeployment(), /SCRIPT_TIME_ZONE_MUST_BE_ASIA_TAIPEI/);
   assert.throws(() => operationsHarness({ origins: [] }).gas.validateDeployment(), /ALLOWED_ORIGINS_REQUIRED/);
+});
+
+test('validateDeployment allows 999 and 1000 attendees but rejects 1001', () => {
+  assert.equal(operationsHarness({ attendeeRows: 999 }).gas.validateDeployment().rows, 999);
+  assert.equal(operationsHarness({ attendeeRows: 1000 }).gas.validateDeployment().rows, 1000);
+  assert.throws(() => operationsHarness({ attendeeRows: 1001 }).gas.validateDeployment(), /SHEET_MAX_ROWS_EXCEEDED/);
 });
 
 test('warmIndexes validates deployment before rebuilding the current generation', () => {

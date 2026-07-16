@@ -202,6 +202,15 @@ test('generation invalidation makes old shards unreachable and rebuilds current 
   assert.ok(laterGets.some(event => event.includes('idx:generation-2:phone:')));
 });
 
+test('caches an empty shard sentinel so repeated misses do not rescan the Sheet', () => {
+  const { gas, state } = createHarness();
+
+  assert.deepEqual([...gas.lookupByPhone_('0999999999')], []);
+  assert.deepEqual([...gas.lookupByPhone_('0999999999')], []);
+
+  assert.equal(state.rangeReads.filter(read => read.column === 1 && read.numColumns === 3).length, 1);
+});
+
 test('refresh after row deletion makes the deleted identity unreachable and shifted row numbers current', () => {
   const { gas, state } = createHarness();
   assert.deepEqual([...gas.lookupByPhone_('0912345678')], [2]);
@@ -266,8 +275,9 @@ test('returns BUSY without reading or writing when the confirmation lock is unav
 test('preserves the first timestamp on repeated confirmation', () => {
   const { gas, state } = createHarness();
   const firstTimestamp = state.rows[2][5];
+  const identityHash = gas.attendeeIdentityHash_(gas.readAttendee_(3));
 
-  const result = gas.confirmRow_(3);
+  const result = gas.confirmRow_(3, identityHash);
 
   assert.equal(result.code, 'ALREADY_CHECKED_IN');
   assert.equal(result.checkedInAt, firstTimestamp);
@@ -278,8 +288,10 @@ test('preserves the first timestamp on repeated confirmation', () => {
 
 test('confirmation re-reads A:G and writes only status and timestamp before flushing', () => {
   const { gas, state } = createHarness();
+  const identityHash = gas.attendeeIdentityHash_(gas.readAttendee_(2));
+  state.rangeReads = [];
 
-  const result = gas.confirmRow_(2);
+  const result = gas.confirmRow_(2, identityHash);
 
   assert.equal(result.code, 'CHECKED_IN');
   assert.equal(result.checkedInAt.getTime(), FIXED_NOW);
@@ -296,16 +308,46 @@ test('confirmation re-reads A:G and writes only status and timestamp before flus
   assert.deepEqual(state.events.slice(-3), ['setValues', 'flush', 'releaseLock']);
 });
 
+test('confirmation re-resolves the same attendee after rows move and never writes the new row occupant', () => {
+  const { gas, state } = createHarness();
+  const identityHash = gas.attendeeIdentityHash_(gas.readAttendee_(2));
+  state.rows.splice(1, 0, ['新住戶', '0977777777', 'new@example.com', '預先報名', '', '', '']);
+  state.rangeReads = [];
+
+  const result = gas.confirmRow_(2, identityHash);
+
+  assert.equal(result.code, 'CHECKED_IN');
+  assert.equal(state.rows[1][4], '');
+  assert.equal(state.rows[2][4], '已報到');
+  assert.ok(state.rangeReads.some(read => read.row === 2 && read.column === 1 && read.numColumns === 3));
+});
+
+test('confirmation rejects a missing or ambiguous attendee identity without writing', () => {
+  const { gas, state } = createHarness();
+  const missing = gas.confirmRow_(2, '0'.repeat(64));
+  assert.equal(missing.code, 'DATA_CONFLICT');
+  assert.equal(state.rangeWrites.length, 0);
+
+  const duplicateRows = cloneRows(fixtureRows);
+  duplicateRows.push([...duplicateRows[1]]);
+  const duplicate = createHarness({ rows: duplicateRows });
+  const identityHash = duplicate.gas.attendeeIdentityHash_(duplicate.gas.readAttendee_(2));
+  const ambiguous = duplicate.gas.confirmRow_(99, identityHash);
+  assert.equal(ambiguous.code, 'DATA_CONFLICT');
+  assert.equal(duplicate.state.rangeWrites.length, 0);
+});
+
 test('confirmation validates exact headers and releases the lock on write failure', () => {
   const badHeaders = cloneRows(fixtureRows);
   badHeaders[0][6] = '錯誤欄位';
   const invalid = createHarness({ rows: badHeaders });
-  assert.throws(() => invalid.gas.confirmRow_(2), /SHEET_HEADERS_MISMATCH/);
+  assert.throws(() => invalid.gas.confirmRow_(2, '0'.repeat(64)), /SHEET_HEADERS_MISMATCH/);
   assert.equal(invalid.state.events.at(-1), 'releaseLock');
   assert.deepEqual(invalid.state.rangeWrites, []);
 
   const failed = createHarness({ setValuesError: new Error('WRITE_FAILED') });
-  assert.throws(() => failed.gas.confirmRow_(2), /WRITE_FAILED/);
+  const identityHash = failed.gas.attendeeIdentityHash_(failed.gas.readAttendee_(2));
+  assert.throws(() => failed.gas.confirmRow_(2, identityHash), /WRITE_FAILED/);
   assert.equal(failed.state.events.at(-1), 'releaseLock');
   assert.equal(failed.state.flushes, 0);
 });
@@ -364,6 +406,21 @@ test('walk-in returns BUSY or DATA_CONFLICT without appending', () => {
   assert.deepEqual({ ...result }, { code: 'DATA_CONFLICT' });
   assert.equal(conflict.state.rows.length, 3);
   assert.equal(conflict.state.events.at(-1), 'releaseLock');
+});
+
+test('walk-in enforces the 1000-attendee capacity inside the write lock', () => {
+  const headers = cloneRows(fixtureRows).slice(0, 1);
+  const attendee = ['既有來賓', '0911111111', 'existing@example.com', '預先報名', '', '', ''];
+  const rowsAtCapacity = headers.concat(Array.from({ length: 1000 }, () => [...attendee]));
+  const { gas, state } = createHarness({ rows: rowsAtCapacity });
+
+  const result = gas.registerWalkIn_({
+    name: '陳來賓', phone: '0922334455', email: 'walkin@example.com',
+  });
+
+  assert.deepEqual({ ...result }, { code: 'CAPACITY_REACHED' });
+  assert.equal(state.events.filter(event => event === 'appendRow').length, 0);
+  assert.equal(state.events.at(-1), 'releaseLock');
 });
 
 test('walk-in validates exact headers and releases the lock on append failure', () => {

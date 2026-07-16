@@ -64,9 +64,11 @@ function validateDeployment() {
   validateSheetShape_();
   var origins = getAllowedOrigins_();
   if (!origins.length) throw new Error('ALLOWED_ORIGINS_REQUIRED');
+  var rows = Math.max(0, getSheet_().getLastRow() - 1);
+  if (rows > CHECKIN.MAX_ROWS) throw new Error('SHEET_MAX_ROWS_EXCEEDED');
   return {
     ok: true,
-    rows: Math.max(0, getSheet_().getLastRow() - 1),
+    rows: rows,
     walkInEnabled: isWalkInEnabled_()
   };
 }

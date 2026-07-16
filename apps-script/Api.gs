@@ -8,11 +8,15 @@ function response_(requestId, ok, code, data) {
   };
 }
 
-function issueToken_(row) {
+function issueToken_(attendee) {
   var token = Utilities.getUuid() + Utilities.getUuid();
   CacheService.getScriptCache().put(
     'token:' + sha256_(token),
-    JSON.stringify({ row: row, issuedAt: Date.now() }),
+    JSON.stringify({
+      row: attendee.row,
+      identityHash: attendeeIdentityHash_(attendee),
+      issuedAt: Date.now()
+    }),
     CHECKIN.TOKEN_TTL_SECONDS
   );
   return token;
@@ -23,7 +27,9 @@ function readToken_(token) {
   if (raw === null) return null;
   try {
     var value = JSON.parse(raw);
-    return Number.isInteger(value.row) && value.row >= 2 ? value : null;
+    return Number.isInteger(value.row) && value.row >= 2 && validAttendeeIdentityHash_(value.identityHash)
+      ? value
+      : null;
   } catch (_error) {
     return null;
   }
@@ -68,7 +74,7 @@ function lookupResponse_(request, kind) {
     }
     return response_(requestId, true, CHECKIN.CODES.FOUND, {
       maskedName: maskName_(attendee.name),
-      token: issueToken_(classification.row)
+      token: issueToken_(attendee)
     });
   } catch (_error) {
     return response_(requestId, false, CHECKIN.CODES.SYSTEM_ERROR);
@@ -107,13 +113,17 @@ function apiConfirmCheckIn(request) {
     var token = request.payload.token;
     var tokenValue = readToken_(token);
     if (!tokenValue) return response_(requestId, false, CHECKIN.CODES.TOKEN_EXPIRED);
-    var result = confirmRow_(tokenValue.row);
+    var result = confirmRow_(tokenValue.row, tokenValue.identityHash);
     if (result.code === CHECKIN.CODES.BUSY) return response_(requestId, false, CHECKIN.CODES.BUSY);
     if (result.code === CHECKIN.CODES.CHECKED_IN || result.code === CHECKIN.CODES.ALREADY_CHECKED_IN) {
       removeToken_(token);
       return response_(requestId, true, result.code, {
         checkedInAt: formatTaipei_(result.checkedInAt)
       });
+    }
+    if (result.code === CHECKIN.CODES.DATA_CONFLICT) {
+      removeToken_(token);
+      return response_(requestId, false, CHECKIN.CODES.DATA_CONFLICT);
     }
     return response_(requestId, false, CHECKIN.CODES.SYSTEM_ERROR);
   } catch (_error) {
@@ -153,10 +163,14 @@ function apiRegisterWalkIn(request) {
       }
       return response_(requestId, true, CHECKIN.CODES.FOUND, {
         maskedName: maskName_(attendee.name),
-        token: issueToken_(result.row)
+        token: issueToken_(attendee)
       });
     }
-    if (result.code === CHECKIN.CODES.BUSY || result.code === CHECKIN.CODES.DATA_CONFLICT) {
+    if (
+      result.code === CHECKIN.CODES.BUSY ||
+      result.code === CHECKIN.CODES.DATA_CONFLICT ||
+      result.code === CHECKIN.CODES.CAPACITY_REACHED
+    ) {
       return response_(requestId, false, result.code);
     }
     return response_(requestId, false, CHECKIN.CODES.SYSTEM_ERROR);

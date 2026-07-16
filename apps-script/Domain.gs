@@ -51,6 +51,17 @@ function sha256_(value) {
   }).join('');
 }
 
+function attendeeIdentityHash_(attendee) {
+  return sha256_(
+    'attendee:' + normalizePhone_(attendee && attendee.phone) + '\n' +
+    normalizeEmail_(attendee && attendee.email)
+  );
+}
+
+function validAttendeeIdentityHash_(value) {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+}
+
 function formatTaipei_(value) {
   return Utilities.formatDate(new Date(value), CHECKIN.TIME_ZONE, 'yyyy/MM/dd HH:mm');
 }

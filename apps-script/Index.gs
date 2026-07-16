@@ -24,6 +24,10 @@ function getIndexedRows_(kind, normalized) {
   if (raw === null) {
     rebuildIndexes_(generation);
     raw = cache.get(key.cacheKey);
+    if (raw === null) {
+      raw = '{}';
+      cache.put(key.cacheKey, raw, CHECKIN.INDEX_TTL_SECONDS);
+    }
   }
   var shard = raw ? JSON.parse(raw) : {};
   return shard[key.hash] || [];
