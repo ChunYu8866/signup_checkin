@@ -3,4 +3,5 @@ export const APP_CONFIG = Object.freeze({
   bridgeOrigin: 'https://script.googleusercontent.com',
   walkInEnabled: false,
   privacyNoticeApproved: false,
+  privacyNoticeText: '',
 });

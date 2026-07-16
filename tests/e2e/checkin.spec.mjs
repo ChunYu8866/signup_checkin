@@ -6,6 +6,12 @@ test.beforeEach(async ({ page }) => {
     const calls = [];
     window.__CHECKIN_TEST_API__ = {
       calls,
+      privacyNoticeText: 'E2E 測試用個人資料蒐集告知內容。',
+      retryOptions: {
+        delays: [0],
+        jitter: () => 0,
+        sleep: () => new Promise(resolve => setTimeout(resolve, 100)),
+      },
       setReplies(values) { replies.splice(0, replies.length, ...values); calls.length = 0; },
       async request(action, payload, requestId) {
         calls.push({ action, payload, requestId });
@@ -29,16 +35,45 @@ async function submitPhoneLookup(page) {
   await page.getByRole('button', { name: '查詢報名資料' }).click();
 }
 
-async function routeConfig(page, { walkInEnabled, privacyNoticeApproved }) {
+async function routeConfig(page, {
+  walkInEnabled = false,
+  privacyNoticeApproved = false,
+  privacyNoticeText = '',
+  bridgeUrl = '',
+  bridgeOrigin = 'https://script.googleusercontent.com',
+}) {
   await page.route('**/assets/js/config.js', route => route.fulfill({
     contentType: 'text/javascript; charset=utf-8',
     body: `export const APP_CONFIG = Object.freeze({
-      bridgeUrl: '',
-      bridgeOrigin: 'https://script.googleusercontent.com',
+      bridgeUrl: ${JSON.stringify(bridgeUrl)},
+      bridgeOrigin: ${JSON.stringify(bridgeOrigin)},
       walkInEnabled: ${walkInEnabled},
-      privacyNoticeApproved: ${privacyNoticeApproved}
+      privacyNoticeApproved: ${privacyNoticeApproved},
+      privacyNoticeText: ${JSON.stringify(privacyNoticeText)}
     });`,
   }));
+}
+
+async function routeBridge(page, responsesByLoad) {
+  let loads = 0;
+  await page.route('**/test-bridge', route => {
+    const responses = responsesByLoad[Math.min(loads, responsesByLoad.length - 1)];
+    loads += 1;
+    return route.fulfill({
+      contentType: 'text/html; charset=utf-8',
+      body: `<!doctype html><script>
+        const responses = ${JSON.stringify(responses)};
+        addEventListener('message', event => {
+          const request = event.data;
+          parent.__BRIDGE_CALLS__ ??= [];
+          parent.__BRIDGE_CALLS__.push(request);
+          const response = responses.shift() ?? { version: 1, ok: false, code: 'SYSTEM_ERROR', data: {} };
+          event.source.postMessage({ ...response, version: 1, requestId: request.requestId }, event.origin);
+        });
+      <\/script>`,
+    });
+  });
+  return () => loads;
 }
 
 test('phone miss falls back to email then shows masked confirmation', async ({ page }) => {
@@ -99,6 +134,8 @@ test('email miss opens validated walk-in flow and submits normalized values', as
   await page.getByLabel('E-mail').fill('missing@example.com');
   await page.getByRole('button', { name: '使用 E-mail 查詢' }).click();
   await expect(page.getByRole('heading', { name: '現場報名' })).toBeFocused();
+  await expect(page.locator('#privacy-notice')).toContainText('E2E 測試用個人資料蒐集告知內容。');
+  await expect(page.locator('#privacy-notice')).not.toBeEmpty();
 
   await page.getByRole('button', { name: '完成現場報名與報到' }).click();
   await expect(page.locator('#name-error')).toHaveText('姓名需為 2 至 50 個字元');
@@ -107,6 +144,9 @@ test('email miss opens validated walk-in flow and submits normalized values', as
   await page.getByLabel('姓名').fill('  林  小宇  ');
   await page.getByLabel('手機號碼後 8 碼').fill('98765432');
   await page.getByLabel('E-mail').fill(' WalkIn@Example.com ');
+  await page.getByRole('button', { name: '完成現場報名與報到' }).click();
+  await expect(page.locator('#status')).toContainText('請先閱讀並同意個人資料蒐集告知');
+  await expect.poll(() => page.evaluate(() => window.__CHECKIN_TEST_API__.calls)).toHaveLength(2);
   await page.getByLabel('我已閱讀並同意個人資料蒐集告知').check();
   await page.getByRole('button', { name: '完成現場報名與報到' }).click();
   await expect(page.getByRole('heading', { name: '現場登記與報到已完成' })).toBeVisible();
@@ -114,6 +154,16 @@ test('email miss opens validated walk-in flow and submits normalized values', as
     action: 'registerWalkIn',
     payload: { name: '林 小宇', phone: '0998765432', email: 'WalkIn@Example.com', consent: true },
   }));
+});
+
+test('client validation errors are announced and never call the API', async ({ page }) => {
+  await page.goto('/');
+  await openPhoneLookup(page);
+  await page.getByLabel('手機號碼後 8 碼').fill('123');
+  await page.getByRole('button', { name: '查詢報名資料' }).click();
+  await expect(page.locator('#status')).toContainText('請輸入手機號碼後 8 碼');
+  await expect(page.getByLabel('手機號碼後 8 碼')).toBeFocused();
+  await expect.poll(() => page.evaluate(() => window.__CHECKIN_TEST_API__.calls)).toHaveLength(0);
 });
 
 test('token expiry preserves phone input and the rebound form can query again', async ({ page }) => {
@@ -133,7 +183,6 @@ test('token expiry preserves phone input and the rebound form can query again', 
 for (const { code, heading, data = {} } of [
   { code: 'ALREADY_CHECKED_IN', heading: '您已完成報到', data: { checkedInAt: '2026/08/03 13:40' } },
   { code: 'DATA_CONFLICT', heading: '資料需要確認' },
-  { code: 'SYSTEM_ERROR', heading: '系統暫時無法使用' },
 ]) {
   test(`${code} renders its safe terminal state`, async ({ page }) => {
     await page.goto('/');
@@ -150,6 +199,37 @@ for (const { code, heading, data = {} } of [
     expect(await page.evaluate(() => window.__unsafe)).toBeUndefined();
   });
 }
+
+for (const code of ['BUSY', 'NETWORK_RETRYABLE', 'SYSTEM_ERROR']) {
+  test(`${code} exhaustion renders the shared actionable error and preserves the action`, async ({ page }) => {
+    await page.goto('/');
+    const failures = code === 'SYSTEM_ERROR' ? [code] : [code, code];
+    await setReplies(page, [
+      ...failures.map(value => ({ version: 1, ok: false, code: value, requestId: 'req-terminal', data: {} })),
+      { version: 1, ok: true, code: 'FOUND', data: { maskedName: '林○宇', token: 'fresh' } },
+    ]);
+    await submitPhoneLookup(page);
+    await expect(page.getByRole('heading', { name: '目前無法完成報到' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '再次嘗試' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '返回修改資料' })).toBeVisible();
+
+    await page.getByRole('button', { name: '再次嘗試' }).click();
+    await expect(page.getByText('林○宇')).toBeVisible();
+    const calls = await page.evaluate(() => window.__CHECKIN_TEST_API__.calls);
+    expect(calls.at(-1).action).toBe('lookupByPhone');
+    expect(calls.at(-1).payload).toEqual({ phone: '0912345678' });
+    expect(new Set(calls.map(call => call.requestId)).size).toBe(1);
+  });
+}
+
+test('actionable error can return to edit the preserved lookup', async ({ page }) => {
+  await page.goto('/');
+  await setReplies(page, [{ version: 1, ok: false, code: 'SYSTEM_ERROR', data: {} }]);
+  await submitPhoneLookup(page);
+  await page.getByRole('button', { name: '返回修改資料' }).click();
+  await expect(page.getByLabel('手機號碼後 8 碼')).toHaveValue('12345678');
+  await expect(page.getByLabel('手機號碼後 8 碼')).toBeFocused();
+});
 
 test('INVALID_INPUT restores the preserved form and focuses its first field error', async ({ page }) => {
   await page.goto('/');
@@ -183,14 +263,27 @@ test('API-returned name and time are rendered as text, never executable markup',
 });
 
 test('closed release gates and non-local host ignore the fake API', async ({ page }) => {
+  const origin = 'http://127.0.0.2:4173';
+  await routeConfig(page, { bridgeUrl: `${origin}/test-bridge`, bridgeOrigin: origin });
+  await routeBridge(page, [[
+    { ok: true, code: 'OK', data: {} },
+    { ok: false, code: 'NOT_FOUND', data: {} },
+  ]]);
   await page.goto('http://127.0.0.2:4173/');
   await expect(page.getByRole('button', { name: '我要現場報名' })).toBeDisabled();
+  await submitPhoneLookup(page);
+  await expect(page.getByRole('heading', { name: '改用 E-mail 查詢' })).toBeVisible();
   expect(await page.evaluate(() => window.__CHECKIN_TEST_API__.calls)).toHaveLength(0);
+  await expect.poll(() => page.evaluate(() => window.__BRIDGE_CALLS__.map(call => call.action))).toEqual([
+    'healthCheck',
+    'lookupByPhone',
+  ]);
 });
 
 for (const gates of [
   { walkInEnabled: true, privacyNoticeApproved: false },
   { walkInEnabled: false, privacyNoticeApproved: true },
+  { walkInEnabled: true, privacyNoticeApproved: true, privacyNoticeText: '' },
 ]) {
   test(`walk-in stays closed unless both release gates pass: ${JSON.stringify(gates)}`, async ({ page }) => {
     await routeConfig(page, gates);
@@ -200,10 +293,55 @@ for (const gates of [
 }
 
 test('walk-in opens on a non-local host only when both release gates pass', async ({ page }) => {
-  await routeConfig(page, { walkInEnabled: true, privacyNoticeApproved: true });
+  await routeConfig(page, {
+    walkInEnabled: true,
+    privacyNoticeApproved: true,
+    privacyNoticeText: '經核准的個人資料蒐集告知。',
+  });
   await page.goto('http://127.0.0.2:4173/');
   await page.getByRole('button', { name: '我要現場報名' }).click();
   await expect(page.getByRole('heading', { name: '現場報名' })).toBeFocused();
+  await expect(page.locator('#privacy-notice')).toHaveText('經核准的個人資料蒐集告知。');
+});
+
+test('failed bridge health is discarded and rebuilt inside one retry operation', async ({ page }) => {
+  const origin = 'http://127.0.0.2:4173';
+  await routeConfig(page, { bridgeUrl: `${origin}/test-bridge`, bridgeOrigin: origin });
+  const bridgeLoads = await routeBridge(page, [
+    [{ ok: false, code: 'SYSTEM_ERROR', data: {} }],
+    [
+      { ok: true, code: 'OK', data: {} },
+      { ok: false, code: 'BUSY', data: {} },
+      { ok: true, code: 'ALREADY_CHECKED_IN', data: { checkedInAt: '2026/08/03 13:40' } },
+    ],
+  ]);
+
+  await page.goto(`${origin}/`);
+  await submitPhoneLookup(page);
+  await expect(page.getByRole('heading', { name: '您已完成報到' })).toBeVisible({ timeout: 12_000 });
+  expect(bridgeLoads()).toBe(2);
+  await expect(page.locator('iframe')).toHaveCount(1);
+  const actionCalls = await page.evaluate(() => window.__BRIDGE_CALLS__.filter(call => call.action === 'lookupByPhone'));
+  expect(actionCalls).toHaveLength(2);
+  expect(actionCalls[1].payload).toEqual(actionCalls[0].payload);
+  expect(actionCalls[1].requestId).toBe(actionCalls[0].requestId);
+});
+
+test('long approved notice stays readable without horizontal overflow at 320px', async ({ page }) => {
+  const longNotice = `<img src=x onerror="window.__unsafe=true">${'個人資料蒐集告知'.repeat(80)}${'A'.repeat(180)}`;
+  await routeConfig(page, {
+    walkInEnabled: true,
+    privacyNoticeApproved: true,
+    privacyNoticeText: longNotice,
+  });
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.goto('http://127.0.0.2:4173/');
+  await page.getByRole('button', { name: '我要現場報名' }).click();
+  await page.getByText('個人資料蒐集與使用說明').click();
+  await expect(page.locator('#privacy-notice')).toContainText('<img src=x');
+  expect(await page.locator('#privacy-notice img').count()).toBe(0);
+  expect(await page.evaluate(() => window.__unsafe)).toBeUndefined();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 
 for (const width of [320, 375, 390, 430, 768, 1440]) {

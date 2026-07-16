@@ -27,6 +27,14 @@ const status = document.querySelector('#status');
 const localTest = ['127.0.0.1', 'localhost'].includes(location.hostname)
   ? window.__CHECKIN_TEST_API__
   : null;
+const privacyNoticeText = localTest?.privacyNoticeText ?? APP_CONFIG.privacyNoticeText ?? '';
+const walkInReleased = localTest
+  ? Boolean(privacyNoticeText.trim())
+  : Boolean(
+      APP_CONFIG.walkInEnabled
+      && APP_CONFIG.privacyNoticeApproved
+      && privacyNoticeText.trim(),
+    );
 
 function announce(text) {
   status.textContent = '';
@@ -71,7 +79,7 @@ function confirmMarkup() {
 }
 
 function walkInMarkup() {
-  return `<h2 tabindex="-1">現場報名</h2><form id="walk-in-form" novalidate><label for="name">姓名</label><input id="name" autocomplete="name" maxlength="50" value="${escapeHtml(state.name)}" aria-describedby="name-error"><p id="name-error" class="field-error"></p><label for="walk-phone">手機號碼後 8 碼</label><div class="phone-field"><span>09</span><input id="walk-phone" type="text" inputmode="numeric" autocomplete="tel-national" maxlength="8" value="${escapeHtml(state.phoneSuffix)}" aria-describedby="walk-phone-error"></div><p id="walk-phone-error" class="field-error"></p><label for="walk-email">E-mail</label><input id="walk-email" type="email" inputmode="email" autocomplete="email" maxlength="254" value="${escapeHtml(state.email)}" aria-describedby="walk-email-error"><p id="walk-email-error" class="field-error"></p><details><summary>個人資料蒐集告知</summary><div id="privacy-notice"></div></details><label class="consent"><input id="privacy-consent" type="checkbox" aria-describedby="privacy-consent-error">我已閱讀並同意個人資料蒐集告知</label><p id="privacy-consent-error" class="field-error"></p><button class="button button--primary" type="submit">完成現場報名與報到</button><button class="button button--text" type="button" data-home>返回</button></form>`;
+  return `<h2 tabindex="-1">現場報名</h2><form id="walk-in-form" novalidate><label for="name">姓名</label><input id="name" autocomplete="name" maxlength="50" value="${escapeHtml(state.name)}" aria-describedby="name-error"><p id="name-error" class="field-error"></p><label for="walk-phone">手機號碼後 8 碼</label><div class="phone-field"><span>09</span><input id="walk-phone" type="text" inputmode="numeric" autocomplete="tel-national" maxlength="8" value="${escapeHtml(state.phoneSuffix)}" aria-describedby="walk-phone-error"></div><p id="walk-phone-error" class="field-error"></p><label for="walk-email">E-mail</label><input id="walk-email" type="email" inputmode="email" autocomplete="email" maxlength="254" value="${escapeHtml(state.email)}" aria-describedby="walk-email-error"><p id="walk-email-error" class="field-error"></p><details><summary>個人資料蒐集與使用說明</summary><div id="privacy-notice">${escapeHtml(privacyNoticeText)}</div></details><label class="consent"><input id="privacy-consent" type="checkbox" aria-describedby="privacy-consent-error">我已閱讀並同意個人資料蒐集告知</label><p id="privacy-consent-error" class="field-error"></p><button class="button button--primary" type="submit">完成現場報名與報到</button><button class="button button--text" type="button" data-home>返回</button></form>`;
 }
 
 function renderPhone(error) {
@@ -86,25 +94,48 @@ function renderEmail(error) {
   if (error) fieldError('email', error);
 }
 
-async function call(action, payload) {
-  state.lastAction = { action, payload };
-  let api;
-  try {
-    api = localTest ?? await createBridgeClient();
-  } catch (error) {
-    return {
-      version: 1,
-      ok: false,
-      code: error.code ?? 'SYSTEM_ERROR',
-      data: {},
-    };
-  }
+async function call(action, payload, requestId = crypto.randomUUID()) {
+  state.lastAction = { action, payload, requestId };
   return runWithWaitingRoom(
-    requestId => api.request(action, payload, requestId),
+    async stableRequestId => {
+      const api = localTest ?? await createBridgeClient();
+      return api.request(action, payload, stableRequestId);
+    },
     {
       onWait: ms => show('waiting', `<h2 tabindex="-1">目前報到人數較多</h2><p>系統正在為您安排報到，請勿關閉頁面。</p><p>約 ${Math.ceil(ms / 1000)} 秒後自動重試</p>`),
     },
+    { ...localTest?.retryOptions, requestId },
   );
+}
+
+function restoreLastActionForEditing() {
+  const action = state.lastAction?.action;
+  if (action === 'lookupByPhone') {
+    renderPhone();
+    document.querySelector('#phone')?.focus();
+    return;
+  }
+  if (action === 'lookupByEmail') {
+    renderEmail();
+    document.querySelector('#email')?.focus();
+    return;
+  }
+  if (action === 'registerWalkIn') {
+    show('walkIn', walkInMarkup());
+    bindWalkInForm();
+    document.querySelector('#name')?.focus();
+    return;
+  }
+  if (action === 'confirmCheckIn') {
+    show('confirm', confirmMarkup());
+    return;
+  }
+  location.reload();
+}
+
+function renderActionableError(response) {
+  const requestId = escapeHtml(response?.requestId ?? state.lastAction?.requestId ?? '無');
+  show('error', `<h2 tabindex="-1">目前無法完成報到</h2><p>請再次嘗試，或返回修改資料。</p><p>請求編號：${requestId}</p><button id="retry" class="button button--primary" type="button">再次嘗試</button><button class="button button--text" type="button" data-edit>返回修改資料</button>`);
 }
 
 function restoreInvalidInput() {
@@ -153,48 +184,71 @@ function handleResponse(response) {
     return show('error', '<h2 tabindex="-1">系統設定錯誤</h2><p>目前無法從這個網站進行報到，請洽現場工作人員。</p>');
   }
   if (response?.code === 'BUSY' || response?.code === 'NETWORK_RETRYABLE') {
-    return show('error', '<h2 tabindex="-1">目前仍無法完成</h2><button id="retry" class="button button--primary" type="button">再次嘗試</button>');
+    return renderActionableError(response);
   }
-  return show('error', `<h2 tabindex="-1">系統暫時無法使用</h2><p>請稍後再試。識別碼：${escapeHtml(response?.requestId ?? '無')}</p>`);
+  return renderActionableError(response);
 }
 
 let bridgePromise;
 function createBridgeClient() {
   if (bridgePromise) return bridgePromise;
-  bridgePromise = new Promise((resolve, reject) => {
-    if (!APP_CONFIG.bridgeUrl) {
-      reject(Object.assign(new Error('Bridge not configured'), { code: 'SYSTEM_ERROR' }));
-      return;
-    }
+  if (!APP_CONFIG.bridgeUrl) {
+    return Promise.reject(Object.assign(new Error('Bridge not configured'), { code: 'SYSTEM_ERROR' }));
+  }
+
+  const promise = new Promise((resolve, reject) => {
     const frame = document.createElement('iframe');
+    let client;
+    let settled = false;
+    let timer;
+    const fail = error => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      client?.destroy();
+      frame.remove();
+      reject(error);
+    };
     frame.hidden = true;
     frame.title = '報到系統安全連線';
     frame.src = APP_CONFIG.bridgeUrl;
-    const timer = setTimeout(
-      () => reject(Object.assign(new Error('Bridge load timeout'), { code: 'NETWORK_RETRYABLE' })),
+    timer = setTimeout(
+      () => fail(Object.assign(new Error('Bridge load timeout'), { code: 'NETWORK_RETRYABLE' })),
       12000,
     );
     frame.addEventListener('load', async () => {
-      clearTimeout(timer);
       try {
-        const client = new BridgeClient({
+        client = new BridgeClient({
           targetWindow: frame.contentWindow,
           targetOrigin: APP_CONFIG.bridgeOrigin,
         });
         const health = await client.request('healthCheck', {});
-        if (!health.ok) throw new Error('Bridge health check failed');
+        if (!health.ok) {
+          throw Object.assign(new Error('Bridge health check failed'), {
+            code: 'NETWORK_RETRYABLE',
+          });
+        }
+        settled = true;
+        clearTimeout(timer);
         resolve(client);
       } catch (error) {
-        reject(error);
+        fail(error);
       }
     }, { once: true });
+    frame.addEventListener('error', () => {
+      fail(Object.assign(new Error('Bridge load failed'), { code: 'NETWORK_RETRYABLE' }));
+    }, { once: true });
     document.body.append(frame);
+  });
+  bridgePromise = promise;
+  void promise.catch(() => {
+    if (bridgePromise === promise) bridgePromise = undefined;
   });
   return bridgePromise;
 }
 
 function beginWalkIn() {
-  if (!localTest && (!APP_CONFIG.walkInEnabled || !APP_CONFIG.privacyNoticeApproved)) {
+  if (!walkInReleased) {
     return show('error', '<h2 tabindex="-1">現場報名尚未開放</h2><p>請洽現場工作人員。</p>');
   }
   show('walkIn', walkInMarkup());
@@ -214,7 +268,10 @@ function bindPhoneForm() {
     input.value = state.phoneSuffix;
     const error = validatePhoneSuffix(state.phoneSuffix);
     fieldError('phone', error);
-    if (error) return;
+    if (error) {
+      announce(error);
+      return;
+    }
     form.querySelector('[type="submit"]').disabled = true;
     announce('正在查詢報名資料');
     handleResponse(await call('lookupByPhone', { phone: fullPhone(state.phoneSuffix) }));
@@ -229,7 +286,10 @@ function bindEmailForm() {
     state.email = input.value.trim();
     const error = validateEmail(state.email);
     fieldError('email', error);
-    if (error) return;
+    if (error) {
+      announce(error);
+      return;
+    }
     form.querySelector('[type="submit"]').disabled = true;
     announce('正在使用 E-mail 查詢');
     handleResponse(await call('lookupByEmail', { email: normalizeEmail(state.email) }));
@@ -277,7 +337,7 @@ function bindWalkInForm() {
 
 document.querySelector('#pre-registered').addEventListener('click', () => renderPhone());
 document.querySelector('#walk-in').addEventListener('click', beginWalkIn);
-if (localTest || (APP_CONFIG.walkInEnabled && APP_CONFIG.privacyNoticeApproved)) {
+if (walkInReleased) {
   document.querySelector('#walk-in').disabled = false;
   document.querySelector('#walk-in-release-note').hidden = true;
 }
@@ -293,7 +353,11 @@ host.addEventListener('click', async event => {
   }
   if (event.target.closest('#retry') && state.lastAction) {
     event.target.closest('#retry').disabled = true;
-    handleResponse(await call(state.lastAction.action, state.lastAction.payload));
+    const { action, payload, requestId } = state.lastAction;
+    handleResponse(await call(action, payload, requestId));
+  }
+  if (event.target.closest('[data-edit]')) {
+    restoreLastActionForEditing();
   }
 });
 addEventListener('popstate', () => {
