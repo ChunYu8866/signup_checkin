@@ -4,7 +4,8 @@ export const normalizeEmail = raw => String(raw ?? '').trim().toLowerCase();
 export const normalizeName = raw => String(raw ?? '').trim().replace(/\s+/gu, ' ');
 
 export function validatePhoneSuffix(raw) {
-  return /^\d{8}$/.test(normalizePhoneSuffix(raw)) ? null : '請輸入手機號碼後 8 碼';
+  const digits = String(raw ?? '').replace(/\D/g, '');
+  return /^\d{8}$/.test(digits) ? null : '請輸入手機號碼後 8 碼';
 }
 
 export function validateEmail(raw) {
@@ -16,11 +17,16 @@ export function validateEmail(raw) {
 }
 
 export function validateName(raw) {
-  const value = normalizeName(raw);
+  const rawValue = String(raw ?? '');
+  if (/[\u0009-\u000D\u0085]/u.test(rawValue)) {
+    return '姓名包含不支援的字元';
+  }
+
+  const value = normalizeName(rawValue);
   if ([...value].length < 2 || [...value].length > 50) {
     return '姓名需為 2 至 50 個字元';
   }
-  if (!/^[\p{L}\p{M} .·・'’-]+$/u.test(value)) {
+  if (!/\p{L}/u.test(value) || !/^[\p{L}\p{M} .·・'’-]+$/u.test(value)) {
     return '姓名包含不支援的字元';
   }
   return null;

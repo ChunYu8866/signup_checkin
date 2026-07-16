@@ -17,6 +17,11 @@ test('phone suffix keeps eight digits and builds a Taiwan mobile number', () => 
   assert.equal(validatePhoneSuffix('1234567'), '請輸入手機號碼後 8 碼');
 });
 
+test('phone suffix validation rejects raw input containing more than eight digits', () => {
+  assert.equal(validatePhoneSuffix('123456789'), '請輸入手機號碼後 8 碼');
+  assert.equal(validatePhoneSuffix('0912345678'), '請輸入手機號碼後 8 碼');
+});
+
 test('email comparison is trimmed and case-insensitive', () => {
   assert.equal(normalizeEmail(' User@Example.COM '), 'user@example.com');
   assert.equal(validateEmail('user@example.com'), null);
@@ -28,4 +33,11 @@ test('name normalization accepts common name punctuation and rejects markup', ()
   assert.equal(validateName('王小明'), null);
   assert.equal(validateName('<王>'), '姓名包含不支援的字元');
   assert.equal(validateName('王'), '姓名需為 2 至 50 個字元');
+});
+
+test('name validation rejects control whitespace and names without letters', () => {
+  assert.equal(validateName('王\n小明'), '姓名包含不支援的字元');
+  assert.equal(validateName('王\t小明'), '姓名包含不支援的字元');
+  assert.equal(validateName('・-'), '姓名包含不支援的字元');
+  assert.equal(validateName('\u0301\u0301'), '姓名包含不支援的字元');
 });
