@@ -16,7 +16,7 @@ function hash(value) {
 
 function createApiHarness(options = {}) {
   const state = {
-    cache: new Map(), removed: [], puts: [], confirms: 0, registers: 0, uuid: 0,
+    cache: new Map(), removed: [], puts: [], confirms: 0, registers: 0, uuid: 0, invalidations: 0, phoneLookups: 0, emailLookups: 0,
     properties: {
       ALLOWED_ORIGINS: '["https://example.github.io","http://127.0.0.1:4173"]',
       WALK_IN_ENABLED: 'true',
@@ -42,12 +42,16 @@ function createApiHarness(options = {}) {
     Utilities,
     CacheService: { getScriptCache: () => cache },
     PropertiesService: { getScriptProperties: () => ({ getProperty: key => state.properties[key] ?? null }) },
-    lookupByPhone_: value => value === '0912345678' ? [2] : value === '0987654321' ? [3] : value === '0900000000' ? [2, 3] : [],
+    lookupByPhone_: value => {
+      state.phoneLookups += 1;
+      if (options.phoneLookupSequence) return options.phoneLookupSequence[Math.min(state.invalidations, options.phoneLookupSequence.length - 1)];
+      return value === '0912345678' ? [2] : value === '0987654321' ? [3] : value === '0900000000' ? [2, 3] : [];
+    },
     lookupByEmail_: value => value === 'lin@example.com' ? [2] : value === 'wang@example.com' ? [3] : [],
     classifyRows_: rows => rows.length === 0 ? { kind: 'none' } : rows.length === 1 ? { kind: 'one', row: rows[0] } : { kind: 'conflict' },
     readAttendee_: row => {
       if (options.readError) throw options.readError;
-      return attendees.get(row);
+      return (options.attendees || attendees).get(row);
     },
     confirmRow_: (row, identityHash) => {
       state.confirms += 1;
@@ -60,6 +64,7 @@ function createApiHarness(options = {}) {
       if (options.registerResult) return options.registerResult;
       return { code: 'WALK_IN_REGISTERED', row: 4, input };
     },
+    invalidateIndexes_: () => { state.invalidations += 1; },
   };
   const gas = loadGas(['Config.gs', 'Domain.gs', 'Api.gs', 'Code.gs'], globals);
   return { gas, state };
@@ -113,6 +118,26 @@ test('lookup maps normalized email, missing, conflict, checked-in, and invalid v
   });
   assert.equal(invalid.code, 'INVALID_INPUT');
   [found, missing, conflict, checked, invalid].forEach(assertSanitized);
+});
+
+test('lookup invalidates stale row indexes before issuing an identity-bound token', () => {
+  const shifted = new Map([
+    [2, { row: 2, name: '王大明', phone: '0987654321', email: 'wang@example.com', status: '已報到', checkedInAt: new Date('2026-08-03T05:40:00Z') }],
+    [3, { row: 3, name: '林小宇', phone: '0912345678', email: 'lin@example.com', status: '', checkedInAt: '' }],
+  ]);
+  const { gas, state } = createApiHarness({
+    attendees: shifted,
+    phoneLookupSequence: [[2], [3]],
+  });
+
+  const result = gas.apiLookupByPhone(request('stale', { phone: '0912345678' }));
+
+  assert.equal(result.code, 'FOUND');
+  assert.equal(state.invalidations, 1);
+  assert.equal(state.phoneLookups, 2);
+  const cached = JSON.parse(state.puts.at(-1).value);
+  assert.equal(cached.row, 3);
+  assert.equal(cached.identityHash, hash('attendee:0912345678\nlin@example.com'));
 });
 
 test('invalid request envelopes and internal failures are sanitized', () => {

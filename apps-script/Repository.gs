@@ -69,13 +69,7 @@ function readAttendee_(row, sheet) {
 function resolveConfirmationAttendee_(row, identityHash, sheet) {
   if (!validAttendeeIdentityHash_(identityHash)) return { kind: 'none' };
   var lastRow = sheet.getLastRow();
-  if (row >= 2 && row <= lastRow) {
-    var current = readAttendee_(row, sheet);
-    if (attendeeIdentityHash_(current) === identityHash) {
-      return { kind: 'one', attendee: current };
-    }
-  }
-
+  var current = row >= 2 && row <= lastRow ? readAttendee_(row, sheet) : null;
   var values = lastRow >= 2 ? sheet.getRange(2, 1, lastRow - 1, 3).getValues() : [];
   var rows = [];
   values.forEach(function (value, offset) {
@@ -84,9 +78,11 @@ function resolveConfirmationAttendee_(row, identityHash, sheet) {
     }
   });
   var classification = classifyRows_(rows);
-  return classification.kind === 'one'
-    ? { kind: 'one', attendee: readAttendee_(classification.row, sheet) }
-    : classification;
+  if (classification.kind !== 'one') return classification;
+  if (classification.row === row && current && attendeeIdentityHash_(current) === identityHash) {
+    return { kind: 'one', attendee: current };
+  }
+  return { kind: 'one', attendee: readAttendee_(classification.row, sheet) };
 }
 
 function confirmRow_(row, identityHash) {

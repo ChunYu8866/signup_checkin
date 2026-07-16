@@ -298,6 +298,7 @@ test('confirmation re-reads A:G and writes only status and timestamp before flus
   assert.deepEqual(state.rangeReads, [
     { row: 1, column: 1, numRows: 1, numColumns: 7, mode: 'display' },
     { row: 2, column: 1, numRows: 1, numColumns: 7, mode: 'values' },
+    { row: 2, column: 1, numRows: 2, numColumns: 3, mode: 'values' },
   ]);
   assert.equal(state.rangeWrites.length, 1);
   assert.equal(state.rangeWrites[0].row, 2);
@@ -306,6 +307,18 @@ test('confirmation re-reads A:G and writes only status and timestamp before flus
   assert.equal(state.rows[1][4], '已報到');
   assert.equal(state.rows[1][5].getTime(), FIXED_NOW);
   assert.deepEqual(state.events.slice(-3), ['setValues', 'flush', 'releaseLock']);
+});
+
+test('confirmation rejects a duplicate identity even when the token row still matches', () => {
+  const duplicateRows = cloneRows(fixtureRows);
+  duplicateRows.push(['另一位來賓', '0912345678', 'lin@example.com', '預先報名', '', '', '']);
+  const duplicate = createHarness({ rows: duplicateRows });
+  const identityHash = duplicate.gas.attendeeIdentityHash_(duplicate.gas.readAttendee_(2));
+
+  const result = duplicate.gas.confirmRow_(2, identityHash);
+
+  assert.equal(result.code, 'DATA_CONFLICT');
+  assert.equal(duplicate.state.rangeWrites.length, 0);
 });
 
 test('confirmation re-resolves the same attendee after rows move and never writes the new row occupant', () => {

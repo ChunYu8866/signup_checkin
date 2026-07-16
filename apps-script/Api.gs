@@ -39,6 +39,12 @@ function removeToken_(token) {
   CacheService.getScriptCache().remove('token:' + sha256_(String(token || '')));
 }
 
+function lookupMatchesAttendee_(attendee, kind, normalized) {
+  return kind === 'phone'
+    ? normalizePhone_(attendee && attendee.phone) === normalized
+    : normalizeEmail_(attendee && attendee.email) === normalized;
+}
+
 function validRequest_(request) {
   return Boolean(
     request &&
@@ -58,15 +64,27 @@ function lookupResponse_(request, kind) {
   if (!validRequest_(request)) return response_(requestId, false, CHECKIN.CODES.INVALID_INPUT);
   try {
     var payload = request.payload;
+    var normalized = kind === 'phone' ? normalizePhone_(payload.phone) : normalizeEmail_(payload.email);
     var error = kind === 'phone' ? validatePhone_(payload.phone) : validateEmail_(payload.email);
     if (error) return response_(requestId, false, CHECKIN.CODES.INVALID_INPUT);
     var rows = kind === 'phone'
-      ? lookupByPhone_(normalizePhone_(payload.phone))
-      : lookupByEmail_(normalizeEmail_(payload.email));
+      ? lookupByPhone_(normalized)
+      : lookupByEmail_(normalized);
     var classification = classifyRows_(rows);
     if (classification.kind === 'none') return response_(requestId, false, CHECKIN.CODES.NOT_FOUND);
     if (classification.kind === 'conflict') return response_(requestId, false, CHECKIN.CODES.DATA_CONFLICT);
     var attendee = readAttendee_(classification.row);
+    if (!lookupMatchesAttendee_(attendee, kind, normalized)) {
+      invalidateIndexes_();
+      rows = kind === 'phone' ? lookupByPhone_(normalized) : lookupByEmail_(normalized);
+      classification = classifyRows_(rows);
+      if (classification.kind === 'none') return response_(requestId, false, CHECKIN.CODES.NOT_FOUND);
+      if (classification.kind === 'conflict') return response_(requestId, false, CHECKIN.CODES.DATA_CONFLICT);
+      attendee = readAttendee_(classification.row);
+      if (!lookupMatchesAttendee_(attendee, kind, normalized)) {
+        return response_(requestId, false, CHECKIN.CODES.DATA_CONFLICT);
+      }
+    }
     if (attendee.status === '已報到') {
       return response_(requestId, true, CHECKIN.CODES.ALREADY_CHECKED_IN, {
         checkedInAt: formatTaipei_(attendee.checkedInAt)
