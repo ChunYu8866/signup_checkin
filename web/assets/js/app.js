@@ -198,28 +198,40 @@ function createBridgeClient() {
 
   const promise = new Promise((resolve, reject) => {
     const frame = document.createElement('iframe');
+    const channel = crypto.randomUUID();
+    const bridgeUrl = new URL(APP_CONFIG.bridgeUrl);
+    bridgeUrl.searchParams.set('channel', channel);
     let client;
     let settled = false;
+    let readyHandled = false;
     let timer;
     const fail = error => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      removeEventListener('message', onReady);
       client?.destroy();
       frame.remove();
       reject(error);
     };
-    frame.hidden = true;
-    frame.title = '報到系統安全連線';
-    frame.src = APP_CONFIG.bridgeUrl;
-    timer = setTimeout(
-      () => fail(Object.assign(new Error('Bridge load timeout'), { code: 'NETWORK_RETRYABLE' })),
-      12000,
-    );
-    frame.addEventListener('load', async () => {
+    const onReady = async event => {
+      const message = event.data;
+      if (
+        readyHandled ||
+        event.origin !== APP_CONFIG.bridgeOrigin ||
+        !event.source ||
+        typeof event.source.postMessage !== 'function' ||
+        !message ||
+        message.version !== 1 ||
+        message.code !== 'BRIDGE_READY' ||
+        message.data?.channel !== channel
+      ) return;
+
+      readyHandled = true;
+      removeEventListener('message', onReady);
       try {
         client = new BridgeClient({
-          targetWindow: frame.contentWindow,
+          targetWindow: event.source,
           targetOrigin: APP_CONFIG.bridgeOrigin,
         });
         const health = await client.request('healthCheck', {});
@@ -234,7 +246,15 @@ function createBridgeClient() {
       } catch (error) {
         fail(error);
       }
-    }, { once: true });
+    };
+    frame.hidden = true;
+    frame.title = '報到系統安全連線';
+    frame.src = bridgeUrl.toString();
+    timer = setTimeout(
+      () => fail(Object.assign(new Error('Bridge load timeout'), { code: 'NETWORK_RETRYABLE' })),
+      12000,
+    );
+    addEventListener('message', onReady);
     frame.addEventListener('error', () => {
       fail(Object.assign(new Error('Bridge load failed'), { code: 'NETWORK_RETRYABLE' }));
     }, { once: true });

@@ -9,6 +9,7 @@
 (() => {
   'use strict';
   const version = 1;
+  const channel = <?!= channelJson ?>;
   const allowed = Object.freeze(<?!= allowedOriginsJson ?>);
   const actions = Object.freeze({
     healthCheck: 'apiHealthCheck',
@@ -46,12 +47,12 @@
         data: {}
       }, origin))[actions[message.action]](envelope);
   });
-  parent.postMessage({
+  top.postMessage({
     version,
     requestId: 'bridge-ready',
     ok: true,
     code: 'BRIDGE_READY',
-    data: {}
+    data: { channel }
   }, '*');
 })();
 </script>

@@ -56,24 +56,70 @@ async function routeConfig(page, {
 
 async function routeBridge(page, responsesByLoad) {
   let loads = 0;
-  await page.route('**/test-bridge', route => {
+  await page.route('**/test-bridge**', route => {
     const responses = responsesByLoad[Math.min(loads, responsesByLoad.length - 1)];
     loads += 1;
     return route.fulfill({
       contentType: 'text/html; charset=utf-8',
       body: `<!doctype html><script>
         const responses = ${JSON.stringify(responses)};
+        const channel = new URL(location.href).searchParams.get('channel');
         addEventListener('message', event => {
           const request = event.data;
-          parent.__BRIDGE_CALLS__ ??= [];
-          parent.__BRIDGE_CALLS__.push(request);
+          top.__BRIDGE_CALLS__ ??= [];
+          top.__BRIDGE_CALLS__.push(request);
           const response = responses.shift() ?? { version: 1, ok: false, code: 'SYSTEM_ERROR', data: {} };
           event.source.postMessage({ ...response, version: 1, requestId: request.requestId }, event.origin);
         });
+        top.postMessage({
+          version: 1,
+          requestId: 'bridge-ready',
+          ok: true,
+          code: 'BRIDGE_READY',
+          data: { channel }
+        }, '*');
       <\/script>`,
     });
   });
   return () => loads;
+}
+
+async function routeNestedBridge(page, responses) {
+  await page.route('**/test-bridge-wrapper**', route => {
+    const channel = new URL(route.request().url()).searchParams.get('channel');
+    return route.fulfill({
+      contentType: 'text/html; charset=utf-8',
+      body: `<!doctype html><iframe src="/test-bridge-inner?channel=${encodeURIComponent(channel ?? '')}"></iframe>`,
+    });
+  });
+  await page.route('**/test-bridge-inner**', route => route.fulfill({
+    contentType: 'text/html; charset=utf-8',
+    body: `<!doctype html><script>
+      const responses = ${JSON.stringify(responses)};
+      const channel = new URL(location.href).searchParams.get('channel');
+      addEventListener('message', event => {
+        const request = event.data;
+        top.__BRIDGE_CALLS__ ??= [];
+        top.__BRIDGE_CALLS__.push(request);
+        const response = responses.shift() ?? { version: 1, ok: false, code: 'SYSTEM_ERROR', data: {} };
+        event.source.postMessage({ ...response, version: 1, requestId: request.requestId }, event.origin);
+      });
+      top.postMessage({
+        version: 1,
+        requestId: 'bridge-ready',
+        ok: true,
+        code: 'BRIDGE_READY',
+        data: { channel: 'wrong-channel' }
+      }, '*');
+      top.postMessage({
+        version: 1,
+        requestId: 'bridge-ready',
+        ok: true,
+        code: 'BRIDGE_READY',
+        data: { channel }
+      }, '*');
+    <\/script>`,
+  }));
 }
 
 test('phone miss falls back to email then shows masked confirmation', async ({ page }) => {
@@ -274,6 +320,27 @@ test('closed release gates and non-local host ignore the fake API', async ({ pag
   await submitPhoneLookup(page);
   await expect(page.getByRole('heading', { name: '改用 E-mail 查詢' })).toBeVisible();
   expect(await page.evaluate(() => window.__CHECKIN_TEST_API__.calls)).toHaveLength(0);
+  await expect.poll(() => page.evaluate(() => window.__BRIDGE_CALLS__.map(call => call.action))).toEqual([
+    'healthCheck',
+    'lookupByPhone',
+  ]);
+});
+
+test('binds to the inner Apps Script bridge through a nested wrapper iframe', async ({ page }) => {
+  const origin = 'http://127.0.0.2:4173';
+  await routeConfig(page, {
+    bridgeUrl: `${origin}/test-bridge-wrapper`,
+    bridgeOrigin: origin,
+  });
+  await routeNestedBridge(page, [
+    { ok: true, code: 'OK', data: {} },
+    { ok: false, code: 'NOT_FOUND', data: {} },
+  ]);
+
+  await page.goto(`${origin}/`);
+  await submitPhoneLookup(page);
+
+  await expect(page.getByRole('heading', { name: '改用 E-mail 查詢' })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.__BRIDGE_CALLS__.map(call => call.action))).toEqual([
     'healthCheck',
     'lookupByPhone',

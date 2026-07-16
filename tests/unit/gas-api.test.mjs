@@ -199,16 +199,24 @@ test('allowed origins are strict and doGet injects only server-serialized JSON w
     PropertiesService: harness.gas.PropertiesService,
     HtmlService: { createTemplateFromFile: name => { assert.equal(name, 'Bridge'); return template; }, XFrameOptionsMode: { ALLOWALL: 'ALLOWALL' } },
   });
-  gasWithHtml.doGet();
+  gasWithHtml.doGet({ parameter: { channel: '123e4567-e89b-42d3-a456-426614174000' } });
   assert.equal(template.allowedOriginsJson, '["https://example.github.io","http://127.0.0.1:4173"]');
+  assert.equal(template.channelJson, '"123e4567-e89b-42d3-a456-426614174000"');
   assert.ok(calls.some(call => call[0] === 'frame' && call[1] === 'ALLOWALL'));
+  assert.throws(() => gasWithHtml.doGet({ parameter: {} }), /INVALID_BRIDGE_CHANNEL/);
+  assert.throws(
+    () => gasWithHtml.doGet({ parameter: { channel: '</script><script>alert(1)</script>' } }),
+    /INVALID_BRIDGE_CHANNEL/,
+  );
 });
 
 function runBridge() {
   const html = fs.readFileSync('apps-script/Bridge.html', 'utf8');
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1]
-    .replace('<?!= allowedOriginsJson ?>', '["https://allowed.example"]');
+    .replace('<?!= allowedOriginsJson ?>', '["https://allowed.example"]')
+    .replace('<?!= channelJson ?>', '"123e4567-e89b-42d3-a456-426614174000"');
   let listener;
+  const readyPosts = [];
   const calls = [];
   let success;
   let failure;
@@ -222,9 +230,9 @@ function runBridge() {
   vm.runInNewContext(script, {
     Object, google: { script: { run: runner } },
     addEventListener: (_name, fn) => { listener = fn; },
-    parent: { postMessage() {} },
+    top: { postMessage: (...args) => readyPosts.push(args) },
   });
-  return { html, calls, dispatch: event => listener(event) };
+  return { html, calls, readyPosts, dispatch: event => listener(event) };
 }
 
 test('Bridge rejects unknown origins, sources, versions, request IDs, and actions', () => {
@@ -252,6 +260,15 @@ test('Bridge dispatches allowlisted actions and replies to exact observed source
   assert.deepEqual(JSON.parse(JSON.stringify(posts[1])), [{ version: 1, requestId: 'r1', ok: false, code: 'SYSTEM_ERROR', data: {} }, 'https://allowed.example']);
   assert.match(bridge.html, /allowed\.includes\(event\.origin\)/);
   assert.match(bridge.html, /source\.postMessage\(result,\s*origin\)/);
+  assert.match(bridge.html, /top\.postMessage/);
+  assert.match(bridge.html, /data:\s*\{\s*channel\s*\}/);
+  assert.deepEqual(JSON.parse(JSON.stringify(bridge.readyPosts)), [[{
+    version: 1,
+    requestId: 'bridge-ready',
+    ok: true,
+    code: 'BRIDGE_READY',
+    data: { channel: '123e4567-e89b-42d3-a456-426614174000' },
+  }, '*']]);
 });
 
 test('API and Bridge production sources contain no identity or token logging', () => {

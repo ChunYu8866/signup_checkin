@@ -21,9 +21,21 @@ function isPrivacyApproved_() {
   return PropertiesService.getScriptProperties().getProperty('PRIVACY_NOTICE_APPROVED') === 'true';
 }
 
-function doGet() {
+function getBridgeChannel_(event) {
+  var channel = event && event.parameter && event.parameter.channel;
+  if (
+    typeof channel !== 'string' ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(channel)
+  ) {
+    throw new Error('INVALID_BRIDGE_CHANNEL');
+  }
+  return channel;
+}
+
+function doGet(event) {
   var template = HtmlService.createTemplateFromFile('Bridge');
   template.allowedOriginsJson = JSON.stringify(getAllowedOrigins_());
+  template.channelJson = JSON.stringify(getBridgeChannel_(event));
   return template.evaluate()
     .setTitle('活動報到安全連線')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
