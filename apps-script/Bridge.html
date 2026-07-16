@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+<head>
+  <base target="_top">
+  <meta name="referrer" content="no-referrer">
+</head>
+<body>
+<script>
+(() => {
+  'use strict';
+  const version = 1;
+  const allowed = Object.freeze(<?!= allowedOriginsJson ?>);
+  const actions = Object.freeze({
+    healthCheck: 'apiHealthCheck',
+    lookupByPhone: 'apiLookupByPhone',
+    lookupByEmail: 'apiLookupByEmail',
+    confirmCheckIn: 'apiConfirmCheckIn',
+    registerWalkIn: 'apiRegisterWalkIn'
+  });
+  addEventListener('message', event => {
+    const message = event.data;
+    if (
+      !allowed.includes(event.origin) ||
+      !event.source ||
+      typeof event.source.postMessage !== 'function' ||
+      !message ||
+      message.version !== version ||
+      typeof message.requestId !== 'string' ||
+      typeof message.action !== 'string' ||
+      !Object.prototype.hasOwnProperty.call(actions, message.action)
+    ) return;
+    const source = event.source;
+    const origin = event.origin;
+    const envelope = {
+      version,
+      requestId: message.requestId,
+      payload: message.payload && typeof message.payload === 'object' ? message.payload : {}
+    };
+    google.script.run
+      .withSuccessHandler(result => source.postMessage(result, origin))
+      .withFailureHandler(() => source.postMessage({
+        version,
+        requestId: message.requestId,
+        ok: false,
+        code: 'SYSTEM_ERROR',
+        data: {}
+      }, origin))[actions[message.action]](envelope);
+  });
+  parent.postMessage({
+    version,
+    requestId: 'bridge-ready',
+    ok: true,
+    code: 'BRIDGE_READY',
+    data: {}
+  }, '*');
+})();
+</script>
+</body>
+</html>
