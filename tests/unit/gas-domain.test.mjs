@@ -36,7 +36,7 @@ test('Apps Script manifest and configuration use the exact deployment contract',
   }, {
     VERSION: 1,
     SHEET_ID: '179uW_qocdZQ8H-yZNYz3_IhNEyviKWCkBDnrnHZQkQU',
-    SHEET_NAME: '工作表1',
+    SHEET_NAME: '簽到表',
     TIME_ZONE: 'Asia/Taipei',
     TOKEN_TTL_SECONDS: 300,
     INDEX_TTL_SECONDS: 900,

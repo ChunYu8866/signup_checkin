@@ -78,7 +78,7 @@ function createHarness(options = {}) {
       return {
         getSpreadsheetTimeZone: () => 'Asia/Taipei',
         getSheetByName(name) {
-          return name === '工作表1' ? sheet : null;
+          return name === '簽到表' ? sheet : null;
         },
       };
     },
