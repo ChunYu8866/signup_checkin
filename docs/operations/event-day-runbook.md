@@ -19,8 +19,9 @@ git status --short
 3. 確認試算表時區與 Apps Script 專案時區均為 `Asia/Taipei`。
 4. 產出重複手機與重複 E-mail 報告；每一筆重複均須由授權人員處理，不得自動合併。
 5. 在 Apps Script 編輯器執行 `validateDeployment()`；必須回傳 `ok: true`。
-6. 執行 `warmIndexes()`；必須回傳 `ok: true`，完成目前 generation 的索引預熱。
-7. 刪除所有 smoke-test 假資料，再核對正式資料列數；不要把報告中的完整識別資料複製到工單或聊天。
+6. 刪除所有 smoke-test 假資料，再核對正式資料列數；不要把報告中的完整識別資料複製到工單或聊天。
+7. **刪除假資料後**執行 `refreshIndexes()`；必須回傳 `ok: true`。此步會切換至新 generation 並依目前列號重建索引，確保已刪除識別資料不可查得、列位移不會指向錯誤參加者。
+8. `warmIndexes()` 僅供資料未增刪、列號未變動時預熱目前 generation；不得用它取代刪除或移動資料後的 `refreshIndexes()`。
 
 ## 3. 部署設定
 

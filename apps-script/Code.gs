@@ -64,3 +64,10 @@ function warmIndexes() {
   rebuildIndexes_(getIndexGeneration_());
   return { ok: true };
 }
+
+function refreshIndexes() {
+  validateDeployment();
+  invalidateIndexes_();
+  rebuildIndexes_(getIndexGeneration_());
+  return { ok: true };
+}

@@ -18,7 +18,7 @@ export function renderConfig({
 }) {
   const bridge = observedUrl(bridgeUrl, 'Bridge URL');
   const pages = observedUrl(pagesUrl, 'Pages URL');
-  if (bridge.hostname !== 'script.google.com' || !/^\/macros\/s\/[^/]+\/exec$/.test(bridge.pathname)) {
+  if (bridge.hostname !== 'script.google.com' || bridge.port || !/^\/macros\/s\/[^/]+\/exec$/.test(bridge.pathname)) {
     throw new Error('Bridge URL must be an observed Apps Script /exec URL');
   }
   const enabled = walkInEnabled === true;

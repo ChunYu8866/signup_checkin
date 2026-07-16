@@ -76,6 +76,7 @@ function createHarness(options = {}) {
     openById(id) {
       if (id !== '179uW_qocdZQ8H-yZNYz3_IhNEyviKWCkBDnrnHZQkQU') throw new Error('WRONG_SHEET_ID');
       return {
+        getSpreadsheetTimeZone: () => 'Asia/Taipei',
         getSheetByName(name) {
           return name === '工作表1' ? sheet : null;
         },
@@ -148,13 +149,24 @@ function createHarness(options = {}) {
   }
 
   const gas = loadGas(
-    ['Config.gs', 'Domain.gs', 'Index.gs', 'Repository.gs'],
+    ['Config.gs', 'Domain.gs', 'Index.gs', 'Repository.gs', 'Code.gs'],
     {
       SpreadsheetApp,
       CacheService: { getScriptCache: () => scriptCache },
       LockService: { getScriptLock: () => lock },
       Utilities,
       Date: FixedDate,
+      Session: { getScriptTimeZone: () => 'Asia/Taipei' },
+      PropertiesService: {
+        getScriptProperties: () => ({
+          getProperty: key => ({
+            ALLOWED_ORIGINS: '["https://owner.github.io"]',
+            WALK_IN_ENABLED: 'false',
+            PRIVACY_NOTICE_APPROVED: 'false',
+          })[key] ?? null,
+        }),
+      },
+      HtmlService: { createTemplateFromFile() {}, XFrameOptionsMode: { ALLOWALL: 'ALLOWALL' } },
     }
   );
 
@@ -188,6 +200,18 @@ test('generation invalidation makes old shards unreachable and rebuilds current 
   const laterGets = state.events.slice(eventBoundary).filter(event => event.startsWith('cache:get:'));
   assert.equal(laterGets.some(event => oldShardKeys.some(key => event === `cache:get:${key}`)), false);
   assert.ok(laterGets.some(event => event.includes('idx:generation-2:phone:')));
+});
+
+test('refresh after row deletion makes the deleted identity unreachable and shifted row numbers current', () => {
+  const { gas, state } = createHarness();
+  assert.deepEqual([...gas.lookupByPhone_('0912345678')], [2]);
+  assert.deepEqual([...gas.lookupByPhone_('0987654321')], [3]);
+
+  state.rows.splice(1, 1);
+  assert.deepEqual({ ...gas.refreshIndexes() }, { ok: true });
+
+  assert.deepEqual([...gas.lookupByPhone_('0912345678')], []);
+  assert.deepEqual([...gas.lookupByPhone_('0987654321')], [2]);
 });
 
 test('rejects an index shard at or above the 95000-byte cache guard', () => {

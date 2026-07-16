@@ -33,6 +33,7 @@ test('rejects non-https, non-exec, credentialed, query, and unapproved release v
     { bridgeUrl: 'http://script.google.com/macros/s/abc/exec' },
     { bridgeUrl: 'https://example.com/macros/s/abc/exec' },
     { bridgeUrl: 'https://script.google.com/macros/s/abc/dev' },
+    { bridgeUrl: 'https://script.google.com:8443/macros/s/abc/exec' },
     { bridgeUrl: 'https://script.google.com/macros/s/abc/exec?x=1' },
     { pagesUrl: 'http://owner.github.io/repo/' },
     { pagesUrl: 'https://user:pass@owner.github.io/repo/' },
@@ -42,7 +43,7 @@ test('rejects non-https, non-exec, credentialed, query, and unapproved release v
 
 function operationsHarness({ headers, sheetZone = 'Asia/Taipei', scriptZone = 'Asia/Taipei', origins = ['https://owner.github.io'] } = {}) {
   const expected = ['姓名', '手機', 'E-mail', '報名類型', '報到狀態', '報到時間', '資料建立時間'];
-  const state = { headers: [...(headers ?? expected)], writes: [], frozen: [], rebuilds: [], validationCalls: 0 };
+  const state = { headers: [...(headers ?? expected)], writes: [], frozen: [], rebuilds: [], invalidations: 0, generation: 'old-generation', validationCalls: 0, events: [] };
   const sheet = {
     getLastRow: () => 3,
     getRange: () => ({
@@ -59,11 +60,13 @@ function operationsHarness({ headers, sheetZone = 'Asia/Taipei', scriptZone = 'A
     HtmlService: { createTemplateFromFile() {}, XFrameOptionsMode: { ALLOWALL: 'ALLOWALL' } },
     getSheet_: () => sheet,
     validateSheetShape_() {
+      state.events.push('validate');
       state.validationCalls += 1;
       if (state.headers.some((value, index) => value !== expected[index])) throw new Error('SHEET_HEADERS_MISMATCH');
     },
-    getIndexGeneration_: () => 'current-generation',
-    rebuildIndexes_: generation => state.rebuilds.push(generation),
+    invalidateIndexes_() { state.events.push('invalidate'); state.invalidations += 1; state.generation = 'new-generation'; },
+    getIndexGeneration_() { state.events.push(`get:${state.generation}`); return state.generation; },
+    rebuildIndexes_(generation) { state.events.push(`rebuild:${generation}`); state.rebuilds.push(generation); },
   };
   const gas = loadGas(['Config.gs', 'Code.gs'], globals);
   return { gas, state };
@@ -93,8 +96,22 @@ test('validateDeployment requires both Taipei zones, exact headers, and at least
 test('warmIndexes validates deployment before rebuilding the current generation', () => {
   const valid = operationsHarness();
   assert.deepEqual({ ...valid.gas.warmIndexes() }, { ok: true });
-  assert.deepEqual(valid.state.rebuilds, ['current-generation']);
+  assert.deepEqual(valid.state.rebuilds, ['old-generation']);
   const invalid = operationsHarness({ sheetZone: 'UTC' });
   assert.throws(() => invalid.gas.warmIndexes(), /SHEET_TIME_ZONE/);
   assert.deepEqual(invalid.state.rebuilds, []);
+});
+
+test('refreshIndexes validates, invalidates, obtains the new generation, then rebuilds it', () => {
+  const harness = operationsHarness();
+
+  assert.deepEqual({ ...harness.gas.refreshIndexes() }, { ok: true });
+  assert.equal(harness.state.invalidations, 1);
+  assert.deepEqual(harness.state.rebuilds, ['new-generation']);
+  assert.deepEqual(harness.state.events, [
+    'validate',
+    'invalidate',
+    'get:new-generation',
+    'rebuild:new-generation',
+  ]);
 });
