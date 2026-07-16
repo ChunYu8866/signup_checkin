@@ -16,7 +16,7 @@ function hash(value) {
 
 function createApiHarness(options = {}) {
   const state = {
-    cache: new Map(), removed: [], puts: [], confirms: 0, registers: 0, uuid: 0, invalidations: 0, phoneLookups: 0, emailLookups: 0,
+    cache: new Map(), removed: [], puts: [], confirms: 0, registers: 0, repairs: 0, syncs: 0, uuid: 0, invalidations: 0, phoneLookups: 0, emailLookups: 0,
     properties: {
       ALLOWED_ORIGINS: '["https://example.github.io","http://127.0.0.1:4173"]',
       WALK_IN_ENABLED: 'true',
@@ -52,6 +52,15 @@ function createApiHarness(options = {}) {
     readAttendee_: row => {
       if (options.readError) throw options.readError;
       return (options.attendees || attendees).get(row);
+    },
+    syncRegistration_: (phone, email) => {
+      state.syncs += 1;
+      state.lastSync = { phone, email };
+      return options.syncResult || { kind: 'none' };
+    },
+    repairAttendeeMetadata_: row => {
+      state.repairs += 1;
+      state.lastRepair = row;
     },
     confirmRow_: (row, identityHash) => {
       state.confirms += 1;
@@ -138,6 +147,19 @@ test('lookup invalidates stale row indexes before issuing an identity-bound toke
   const cached = JSON.parse(state.puts.at(-1).value);
   assert.equal(cached.row, 3);
   assert.equal(cached.identityHash, hash('attendee:0912345678\nlin@example.com'));
+});
+
+test('lookup imports a matching registration when the check-in index has no row', () => {
+  const attendees = new Map([[4, { row: 4, name: '新報名者', phone: '0922334455', email: 'new@example.com', status: '', checkedInAt: '' }]]);
+  const { gas, state } = createApiHarness({
+    attendees,
+    syncResult: { kind: 'one', row: 4 },
+  });
+  const result = gas.apiLookupByPhone(request('import', { phone: '0922334455' }));
+
+  assert.equal(result.code, 'FOUND');
+  assert.equal(state.syncs, 1);
+  assert.deepEqual(state.lastSync, { phone: '0922334455', email: '' });
 });
 
 test('invalid request envelopes and internal failures are sanitized', () => {

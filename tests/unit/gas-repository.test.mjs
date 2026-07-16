@@ -14,6 +14,7 @@ function cloneRows(rows) {
 function createHarness(options = {}) {
   const state = {
     rows: cloneRows(options.rows || fixtureRows),
+    sourceRows: cloneRows(options.sourceRows || [['姓名', '手機', 'E-mail']]),
     cache: new Map(options.cache || []),
     events: [],
     rangeReads: [],
@@ -61,6 +62,36 @@ function createHarness(options = {}) {
     };
   }
 
+  function sourceRange(row, column, numRows = 1, numColumns = 1) {
+    return {
+      getValues() {
+        state.rangeReads.push({ sheet: 'source', row, column, numRows, numColumns, mode: 'values' });
+        return Array.from({ length: numRows }, (_, rowOffset) =>
+          Array.from({ length: numColumns }, (_, columnOffset) =>
+            state.sourceRows[row - 1 + rowOffset]?.[column - 1 + columnOffset] ?? ''
+          )
+        );
+      },
+      getDisplayValues() {
+        state.rangeReads.push({ sheet: 'source', row, column, numRows, numColumns, mode: 'display' });
+        return Array.from({ length: numRows }, (_, rowOffset) =>
+          Array.from({ length: numColumns }, (_, columnOffset) => String(
+            state.sourceRows[row - 1 + rowOffset]?.[column - 1 + columnOffset] ?? ''
+          ))
+        );
+      },
+      setValues(values) {
+        values.forEach((valuesRow, rowOffset) => {
+          if (!state.sourceRows[row - 1 + rowOffset]) state.sourceRows[row - 1 + rowOffset] = [];
+          valuesRow.forEach((value, columnOffset) => {
+            state.sourceRows[row - 1 + rowOffset][column - 1 + columnOffset] = value;
+          });
+        });
+        return this;
+      },
+    };
+  }
+
   const sheet = {
     getLastRow: () => state.rows.length,
     getRange: range,
@@ -71,6 +102,10 @@ function createHarness(options = {}) {
       return this;
     },
   };
+  const sourceSheet = {
+    getLastRow: () => state.sourceRows.length,
+    getRange: sourceRange,
+  };
 
   const SpreadsheetApp = {
     openById(id) {
@@ -78,7 +113,7 @@ function createHarness(options = {}) {
       return {
         getSpreadsheetTimeZone: () => 'Asia/Taipei',
         getSheetByName(name) {
-          return name === '簽到表' ? sheet : null;
+          return name === '簽到表' ? sheet : name === '報名表' ? sourceSheet : null;
         },
       };
     },
@@ -272,7 +307,7 @@ test('returns BUSY without reading or writing when the confirmation lock is unav
   assert.deepEqual(state.events, ['tryLock:1200']);
 });
 
-test('preserves the first timestamp on repeated confirmation', () => {
+test('preserves the first timestamp and repairs missing metadata on repeated confirmation', () => {
   const { gas, state } = createHarness();
   const firstTimestamp = state.rows[2][5];
   const identityHash = gas.attendeeIdentityHash_(gas.readAttendee_(3));
@@ -282,11 +317,14 @@ test('preserves the first timestamp on repeated confirmation', () => {
   assert.equal(result.code, 'ALREADY_CHECKED_IN');
   assert.equal(result.checkedInAt, firstTimestamp);
   assert.equal(state.rows[2][5], firstTimestamp);
-  assert.deepEqual(state.rangeWrites, []);
+  assert.equal(state.rangeWrites.length, 1);
+  assert.equal(state.rangeWrites[0].column, 4);
+  assert.equal(state.rows[2][3], '預先報名');
+  assert.equal(state.rows[2][6].getTime(), FIXED_NOW);
   assert.equal(state.events.at(-1), 'releaseLock');
 });
 
-test('confirmation re-reads A:G and writes only status and timestamp before flushing', () => {
+test('confirmation re-reads A:G and writes metadata, status, and timestamp before flushing', () => {
   const { gas, state } = createHarness();
   const identityHash = gas.attendeeIdentityHash_(gas.readAttendee_(2));
   state.rangeReads = [];
@@ -302,11 +340,48 @@ test('confirmation re-reads A:G and writes only status and timestamp before flus
   ]);
   assert.equal(state.rangeWrites.length, 1);
   assert.equal(state.rangeWrites[0].row, 2);
-  assert.equal(state.rangeWrites[0].column, 5);
-  assert.equal(state.rangeWrites[0].numColumns, 2);
+  assert.equal(state.rangeWrites[0].column, 4);
+  assert.equal(state.rangeWrites[0].numColumns, 4);
   assert.equal(state.rows[1][4], '已報到');
   assert.equal(state.rows[1][5].getTime(), FIXED_NOW);
   assert.deepEqual(state.events.slice(-3), ['setValues', 'flush', 'releaseLock']);
+});
+
+test('confirmation fills registration type and creation time while preserving check-in time', () => {
+  const rows = cloneRows(fixtureRows);
+  rows[1][3] = '';
+  rows[1][4] = '';
+  rows[1][5] = '';
+  rows[1][6] = '';
+  const { gas, state } = createHarness({ rows });
+  const identityHash = gas.attendeeIdentityHash_(gas.readAttendee_(2));
+
+  const result = gas.confirmRow_(2, identityHash);
+
+  assert.equal(result.code, 'CHECKED_IN');
+  assert.equal(state.rows[1][3], '預先報名');
+  assert.equal(state.rows[1][4], '已報到');
+  assert.equal(state.rows[1][5].getTime(), FIXED_NOW);
+  assert.equal(state.rows[1][6].getTime(), FIXED_NOW);
+  assert.equal(state.rangeWrites[0].column, 4);
+  assert.equal(state.rangeWrites[0].numColumns, 4);
+});
+
+test('syncs a matching registration row into the check-in sheet with metadata', () => {
+  const { gas, state } = createHarness({
+    sourceRows: [
+      ['姓名', '手機', 'E-mail'],
+      ['新報名者', '0922334455', 'new@example.com'],
+    ],
+  });
+
+  const result = gas.syncRegistration_('0922334455', 'new@example.com');
+
+  assert.deepEqual({ ...result }, { kind: 'one', row: 4 });
+  assert.deepEqual(state.rows[3].slice(0, 4), ['新報名者', '0922334455', 'new@example.com', '預先報名']);
+  assert.equal(state.rows[3][4], '');
+  assert.equal(state.rows[3][5], '');
+  assert.equal(state.rows[3][6].getTime(), FIXED_NOW);
 });
 
 test('confirmation rejects a duplicate identity even when the token row still matches', () => {

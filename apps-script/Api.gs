@@ -45,6 +45,18 @@ function lookupMatchesAttendee_(attendee, kind, normalized) {
     : normalizeEmail_(attendee && attendee.email) === normalized;
 }
 
+function syncLookupClassification_(kind, normalized) {
+  var result = syncRegistration_(
+    kind === 'phone' ? normalized : '',
+    kind === 'email' ? normalized : ''
+  );
+  if (result.kind === 'one') return { kind: 'one', row: result.row };
+  if (result.kind === 'busy') return { kind: 'busy' };
+  if (result.kind === 'capacity') return { kind: 'capacity' };
+  if (result.kind === 'conflict') return { kind: 'conflict' };
+  return { kind: 'none' };
+}
+
 function validRequest_(request) {
   return Boolean(
     request &&
@@ -71,14 +83,26 @@ function lookupResponse_(request, kind) {
       ? lookupByPhone_(normalized)
       : lookupByEmail_(normalized);
     var classification = classifyRows_(rows);
-    if (classification.kind === 'none') return response_(requestId, false, CHECKIN.CODES.NOT_FOUND);
+    if (classification.kind === 'none') {
+      classification = syncLookupClassification_(kind, normalized);
+      if (classification.kind === 'busy') return response_(requestId, false, CHECKIN.CODES.BUSY);
+      if (classification.kind === 'capacity') return response_(requestId, false, CHECKIN.CODES.CAPACITY_REACHED);
+      if (classification.kind === 'conflict') return response_(requestId, false, CHECKIN.CODES.DATA_CONFLICT);
+      if (classification.kind === 'none') return response_(requestId, false, CHECKIN.CODES.NOT_FOUND);
+    }
     if (classification.kind === 'conflict') return response_(requestId, false, CHECKIN.CODES.DATA_CONFLICT);
     var attendee = readAttendee_(classification.row);
     if (!lookupMatchesAttendee_(attendee, kind, normalized)) {
       invalidateIndexes_();
       rows = kind === 'phone' ? lookupByPhone_(normalized) : lookupByEmail_(normalized);
       classification = classifyRows_(rows);
-      if (classification.kind === 'none') return response_(requestId, false, CHECKIN.CODES.NOT_FOUND);
+      if (classification.kind === 'none') {
+        classification = syncLookupClassification_(kind, normalized);
+        if (classification.kind === 'busy') return response_(requestId, false, CHECKIN.CODES.BUSY);
+        if (classification.kind === 'capacity') return response_(requestId, false, CHECKIN.CODES.CAPACITY_REACHED);
+        if (classification.kind === 'conflict') return response_(requestId, false, CHECKIN.CODES.DATA_CONFLICT);
+        if (classification.kind === 'none') return response_(requestId, false, CHECKIN.CODES.NOT_FOUND);
+      }
       if (classification.kind === 'conflict') return response_(requestId, false, CHECKIN.CODES.DATA_CONFLICT);
       attendee = readAttendee_(classification.row);
       if (!lookupMatchesAttendee_(attendee, kind, normalized)) {
@@ -86,6 +110,7 @@ function lookupResponse_(request, kind) {
       }
     }
     if (attendee.status === '已報到') {
+      if (!attendee.registrationType || !attendee.createdAt) repairAttendeeMetadata_(attendee.row);
       return response_(requestId, true, CHECKIN.CODES.ALREADY_CHECKED_IN, {
         checkedInAt: formatTaipei_(attendee.checkedInAt)
       });

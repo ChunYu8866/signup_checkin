@@ -3,6 +3,8 @@ var CHECKIN = Object.freeze({
   SHEET_ID: '179uW_qocdZQ8H-yZNYz3_IhNEyviKWCkBDnrnHZQkQU',
   SHEET_NAME: '簽到表',
   HEADERS: ['姓名', '手機', 'E-mail', '報名類型', '報到狀態', '報到時間', '資料建立時間'],
+  SOURCE_SHEET_NAME: '報名表',
+  SOURCE_HEADERS: ['姓名', '手機', 'E-mail'],
   TIME_ZONE: 'Asia/Taipei',
   TOKEN_TTL_SECONDS: 300,
   INDEX_TTL_SECONDS: 900,
