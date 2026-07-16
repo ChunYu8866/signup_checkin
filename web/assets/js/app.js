@@ -1,5 +1,5 @@
 import { APP_CONFIG } from './config.js';
-import { BridgeClient } from './bridge-client.js';
+import { BridgeClient, resolveBridgeOrigin } from './bridge-client.js';
 import { runWithWaitingRoom } from './retry.js';
 import {
   fullPhone,
@@ -216,9 +216,10 @@ function createBridgeClient() {
     };
     const onReady = async event => {
       const message = event.data;
+      const observedBridgeOrigin = resolveBridgeOrigin(APP_CONFIG.bridgeOrigin, event.origin);
       if (
         readyHandled ||
-        event.origin !== APP_CONFIG.bridgeOrigin ||
+        !observedBridgeOrigin ||
         !event.source ||
         typeof event.source.postMessage !== 'function' ||
         !message ||
@@ -232,7 +233,7 @@ function createBridgeClient() {
       try {
         client = new BridgeClient({
           targetWindow: event.source,
-          targetOrigin: APP_CONFIG.bridgeOrigin,
+          targetOrigin: observedBridgeOrigin,
         });
         const health = await client.request('healthCheck', {});
         if (!health.ok) {

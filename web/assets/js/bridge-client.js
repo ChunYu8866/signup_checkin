@@ -1,3 +1,24 @@
+const GOOGLE_APPS_SCRIPT_BRIDGE_ORIGIN = 'https://script.googleusercontent.com';
+const GOOGLE_APPS_SCRIPT_BRIDGE_SUFFIX = '-script.googleusercontent.com';
+
+export function resolveBridgeOrigin(configuredOrigin, observedOrigin) {
+  if (observedOrigin === configuredOrigin) return observedOrigin;
+  if (configuredOrigin !== GOOGLE_APPS_SCRIPT_BRIDGE_ORIGIN) return null;
+
+  try {
+    const candidate = new URL(observedOrigin);
+    if (
+      candidate.origin !== observedOrigin ||
+      candidate.protocol !== 'https:' ||
+      candidate.port ||
+      !candidate.hostname.endsWith(GOOGLE_APPS_SCRIPT_BRIDGE_SUFFIX)
+    ) return null;
+    return observedOrigin;
+  } catch {
+    return null;
+  }
+}
+
 export class BridgeClient {
   constructor({ targetWindow, targetOrigin, eventSource = window, timeoutMs = 12000 }) {
     if (!targetWindow || !targetOrigin) throw new Error('Bridge target is required');

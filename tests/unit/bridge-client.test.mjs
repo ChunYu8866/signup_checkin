@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BridgeClient } from '../../web/assets/js/bridge-client.js';
+import { BridgeClient, resolveBridgeOrigin } from '../../web/assets/js/bridge-client.js';
 
 class FakeEvents {
   constructor() {
@@ -21,6 +21,31 @@ class FakeEvents {
 }
 
 const targetOrigin = 'https://script.google.com';
+
+test('resolves only exact origins or Google Apps Script randomized bridge origins', () => {
+  const configured = 'https://script.googleusercontent.com';
+  const randomized = 'https://n-example-0lu-script.googleusercontent.com';
+
+  assert.equal(resolveBridgeOrigin(configured, configured), configured);
+  assert.equal(resolveBridgeOrigin(configured, randomized), randomized);
+  assert.equal(resolveBridgeOrigin('http://127.0.0.2:4173', 'http://127.0.0.2:4173'), 'http://127.0.0.2:4173');
+
+  for (const rejected of [
+    'http://n-example-0lu-script.googleusercontent.com',
+    'https://n-example-0lu-script.googleusercontent.com:8443',
+    'https://script.googleusercontent.com.evil.example',
+    'https://evilscript.googleusercontent.com',
+    'https://n-example-0lu-script.googleusercontent.com.evil.example',
+    'https://n-example-0lu-script.googleusercontent.com/path',
+  ]) {
+    assert.equal(resolveBridgeOrigin(configured, rejected), null, rejected);
+  }
+
+  assert.equal(
+    resolveBridgeOrigin('https://example.com', 'https://n-example-0lu-script.googleusercontent.com'),
+    null,
+  );
+});
 
 function createClient(timeoutMs = 100) {
   const events = new FakeEvents();
