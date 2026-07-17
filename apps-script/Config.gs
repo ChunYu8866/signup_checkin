@@ -8,15 +8,11 @@ var CHECKIN = Object.freeze({
   INDEX_TTL_SECONDS: 900,
   LOCK_WAIT_MS: 1200,
   MAX_ROWS: 1000,
-  // 報到時間窗預設值（可用 Script Properties CHECKIN_OPEN_FROM / CHECKIN_OPEN_UNTIL 覆寫）：
-  // 窗外一律回 NOT_OPEN，縮小名單探測與灌水攻擊的時間窗口。
-  OPEN_FROM_DEFAULT: '2026-08-02T00:00:00+08:00',
-  OPEN_UNTIL_DEFAULT: '2026-08-04T00:00:00+08:00',
   // 近似速率限制（CacheService 計數）：超量回 BUSY，由前端等候室退避。
   RATE_LIMITS: Object.freeze({
     LOOKUP_IDENTITY: Object.freeze({ scope: 'lookup-id', limit: 12, windowSeconds: 600 }),
     LOOKUP_GLOBAL: Object.freeze({ scope: 'lookup-all', limit: 240, windowSeconds: 60 }),
-    WALK_IN_GLOBAL: Object.freeze({ scope: 'walkin-all', limit: 10, windowSeconds: 60 })
+    WALK_IN_GLOBAL: Object.freeze({ scope: 'walkin-all', limit: 20, windowSeconds: 60 })
   }),
   CODES: Object.freeze({
     FOUND: 'FOUND',
@@ -27,7 +23,6 @@ var CHECKIN = Object.freeze({
     CAPACITY_REACHED: 'CAPACITY_REACHED',
     DATA_CONFLICT: 'DATA_CONFLICT',
     TOKEN_EXPIRED: 'TOKEN_EXPIRED',
-    NOT_OPEN: 'NOT_OPEN',
     BUSY: 'BUSY',
     INVALID_INPUT: 'INVALID_INPUT',
     FORBIDDEN_ORIGIN: 'FORBIDDEN_ORIGIN',

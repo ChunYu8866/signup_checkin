@@ -21,8 +21,6 @@ function createApiHarness(options = {}) {
       ALLOWED_ORIGINS: '["https://example.github.io","http://127.0.0.1:4173"]',
       WALK_IN_ENABLED: 'true',
       PRIVACY_NOTICE_APPROVED: 'true',
-      CHECKIN_OPEN_FROM: '2000-01-01T00:00:00+08:00',
-      CHECKIN_OPEN_UNTIL: '2100-01-01T00:00:00+08:00',
       ...options.properties,
     },
   };
@@ -214,15 +212,14 @@ test('walk-in validates release gates and maps repository outcomes without ident
   assert.equal(full.gas.apiRegisterWalkIn(request('w4', { name: '陳來賓', phone: '0922334455', email: 'walkin@example.com', consent: true })).code, 'CAPACITY_REACHED');
 });
 
-test('health check exposes only release state, version, window state, and server time', () => {
+test('health check exposes only release state, version, and server time', () => {
   const { gas } = createApiHarness();
   const result = gas.apiHealthCheck(request('h1', {}));
   assert.equal(result.ok, true);
-  assert.deepEqual(Object.keys(result.data).sort(), ['checkinOpen', 'privacyNoticeApproved', 'serverTime', 'version', 'walkInEnabled']);
+  assert.deepEqual(Object.keys(result.data).sort(), ['privacyNoticeApproved', 'serverTime', 'version', 'walkInEnabled']);
   assert.equal(result.data.version, 1);
   assert.equal(result.data.walkInEnabled, true);
   assert.equal(result.data.privacyNoticeApproved, true);
-  assert.equal(result.data.checkinOpen, true);
   assert.equal(typeof result.data.serverTime, 'number');
   assertSanitized(result);
 });
