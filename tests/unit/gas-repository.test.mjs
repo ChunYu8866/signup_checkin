@@ -156,7 +156,10 @@ function createHarness(options = {}) {
       LockService: { getScriptLock: () => lock },
       Utilities,
       Date: FixedDate,
-      Session: { getScriptTimeZone: () => 'Asia/Taipei' },
+      Session: {
+        getScriptTimeZone: () => 'Asia/Taipei',
+        getActiveUser: () => ({ getEmail: () => 'owner@example.com' }),
+      },
       PropertiesService: {
         getScriptProperties: () => ({
           getProperty: key => ({

@@ -57,7 +57,7 @@ test('rejects non-https, non-exec, credentialed, query, and unapproved release v
   ]) assert.throws(() => renderConfig({ ...base, ...overrides }));
 });
 
-function operationsHarness({ headers, attendeeRows = 2, sheetZone = 'Asia/Taipei', scriptZone = 'Asia/Taipei', origins = ['https://owner.github.io'] } = {}) {
+function operationsHarness({ headers, attendeeRows = 2, sheetZone = 'Asia/Taipei', scriptZone = 'Asia/Taipei', origins = ['https://owner.github.io'], operatorEmail = 'owner@example.com' } = {}) {
   const expected = ['姓名', '手機', 'E-mail', '報名類型', '報到狀態', '報到時間', '資料建立時間'];
   const state = { headers: [...(headers ?? expected)], writes: [], frozen: [], rebuilds: [], invalidations: 0, generation: 'old-generation', validationCalls: 0, events: [] };
   const sheet = {
@@ -71,7 +71,10 @@ function operationsHarness({ headers, attendeeRows = 2, sheetZone = 'Asia/Taipei
   const spreadsheet = { getSheetByName: () => sheet, getSpreadsheetTimeZone: () => sheetZone };
   const globals = {
     SpreadsheetApp: { openById: () => spreadsheet },
-    Session: { getScriptTimeZone: () => scriptZone },
+    Session: {
+      getScriptTimeZone: () => scriptZone,
+      getActiveUser: () => ({ getEmail: () => operatorEmail }),
+    },
     PropertiesService: { getScriptProperties: () => ({ getProperty: key => ({ ALLOWED_ORIGINS: JSON.stringify(origins), WALK_IN_ENABLED: 'false', PRIVACY_NOTICE_APPROVED: 'false' })[key] ?? null }) },
     HtmlService: { createTemplateFromFile() {}, XFrameOptionsMode: { ALLOWALL: 'ALLOWALL' } },
     getSheet_: () => sheet,
@@ -99,6 +102,22 @@ test('initializeSheet writes only a completely blank header row, then validates 
   assert.throws(() => partial.gas.initializeSheet(), /SHEET_HEADERS_MISMATCH/);
   assert.equal(partial.state.writes.length, 0);
   assert.deepEqual(partial.state.frozen, []);
+});
+
+test('operations functions refuse anonymous web-app callers and stay editor-only', () => {
+  for (const name of ['initializeSheet', 'validateDeployment', 'warmIndexes', 'refreshIndexes']) {
+    const anonymous = operationsHarness({ operatorEmail: '' });
+    assert.throws(() => anonymous.gas[name](), /OPERATOR_ONLY/, `${name} must reject anonymous callers`);
+    assert.deepEqual(anonymous.state.writes, []);
+    assert.deepEqual(anonymous.state.rebuilds, []);
+  }
+  const broken = operationsHarness();
+  broken.gas.Session = undefined;
+  const rethrown = loadGas(['Config.gs', 'Code.gs'], {
+    ...Object.fromEntries(['SpreadsheetApp', 'PropertiesService', 'HtmlService', 'getSheet_', 'validateSheetShape_', 'invalidateIndexes_', 'getIndexGeneration_', 'rebuildIndexes_'].map(key => [key, broken.gas[key]])),
+    Session: { getScriptTimeZone: () => 'Asia/Taipei', getActiveUser: () => { throw new Error('no user'); } },
+  });
+  assert.throws(() => rethrown.validateDeployment(), /OPERATOR_ONLY/);
 });
 
 test('validateDeployment requires both Taipei zones, exact headers, and at least one origin', () => {
