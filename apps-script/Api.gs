@@ -63,10 +63,17 @@ function lookupResponse_(request, kind) {
   var requestId = requestId_(request);
   if (!validRequest_(request)) return response_(requestId, false, CHECKIN.CODES.INVALID_INPUT);
   try {
+    if (!isCheckinOpen_()) return response_(requestId, false, CHECKIN.CODES.NOT_OPEN);
     var payload = request.payload;
     var normalized = kind === 'phone' ? normalizePhone_(payload.phone) : normalizeEmail_(payload.email);
     var error = kind === 'phone' ? validatePhone_(payload.phone) : validateEmail_(payload.email);
     if (error) return response_(requestId, false, CHECKIN.CODES.INVALID_INPUT);
+    if (
+      rateLimitExceeded_(CHECKIN.RATE_LIMITS.LOOKUP_IDENTITY, kind + ':' + normalized) ||
+      rateLimitExceeded_(CHECKIN.RATE_LIMITS.LOOKUP_GLOBAL, 'global')
+    ) {
+      return response_(requestId, false, CHECKIN.CODES.BUSY);
+    }
     var rows = kind === 'phone'
       ? lookupByPhone_(normalized)
       : lookupByEmail_(normalized);
@@ -107,6 +114,7 @@ function apiHealthCheck(request) {
       version: CHECKIN.VERSION,
       walkInEnabled: isWalkInEnabled_(),
       privacyNoticeApproved: isPrivacyApproved_(),
+      checkinOpen: isCheckinOpen_(),
       serverTime: Date.now()
     });
   } catch (_error) {
@@ -128,6 +136,7 @@ function apiConfirmCheckIn(request) {
     return response_(requestId, false, CHECKIN.CODES.INVALID_INPUT);
   }
   try {
+    if (!isCheckinOpen_()) return response_(requestId, false, CHECKIN.CODES.NOT_OPEN);
     var token = request.payload.token;
     var tokenValue = readToken_(token);
     if (!tokenValue) return response_(requestId, false, CHECKIN.CODES.TOKEN_EXPIRED);
@@ -153,6 +162,7 @@ function apiRegisterWalkIn(request) {
   var requestId = requestId_(request);
   if (!validRequest_(request)) return response_(requestId, false, CHECKIN.CODES.INVALID_INPUT);
   try {
+    if (!isCheckinOpen_()) return response_(requestId, false, CHECKIN.CODES.NOT_OPEN);
     var payload = request.payload;
     if (
       !isWalkInEnabled_() ||
@@ -163,6 +173,9 @@ function apiRegisterWalkIn(request) {
       validateEmail_(payload.email)
     ) {
       return response_(requestId, false, CHECKIN.CODES.INVALID_INPUT);
+    }
+    if (rateLimitExceeded_(CHECKIN.RATE_LIMITS.WALK_IN_GLOBAL, 'global')) {
+      return response_(requestId, false, CHECKIN.CODES.BUSY);
     }
     var result = registerWalkIn_({
       name: normalizeName_(payload.name),

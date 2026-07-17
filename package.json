@@ -7,7 +7,8 @@
   "scripts": {
     "test": "node --test tests/unit/*.test.mjs",
     "test:e2e": "playwright test",
-    "verify": "npm test && npm run test:e2e"
+    "verify": "npm test && npm run test:e2e",
+    "build:gs": "node scripts/build-merged-gs.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.61.1"

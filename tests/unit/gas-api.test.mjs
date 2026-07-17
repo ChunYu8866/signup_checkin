@@ -21,6 +21,8 @@ function createApiHarness(options = {}) {
       ALLOWED_ORIGINS: '["https://example.github.io","http://127.0.0.1:4173"]',
       WALK_IN_ENABLED: 'true',
       PRIVACY_NOTICE_APPROVED: 'true',
+      CHECKIN_OPEN_FROM: '2000-01-01T00:00:00+08:00',
+      CHECKIN_OPEN_UNTIL: '2100-01-01T00:00:00+08:00',
       ...options.properties,
     },
   };
@@ -90,16 +92,23 @@ test('lookup returns only maskedName and an opaque hashed-cache token', () => {
     data: { maskedName: '林○宇', token: 'opaque-1opaque-2' },
   });
   assertSanitized(result);
-  assert.equal(state.puts.length, 1);
-  assert.equal(state.puts[0].key, `token:${hash('opaque-1opaque-2')}`);
-  assert.equal(state.puts[0].ttl, 300);
-  const cached = JSON.parse(state.puts[0].value);
+  const tokenPuts = state.puts.filter(put => put.key.startsWith('token:'));
+  assert.equal(tokenPuts.length, 1);
+  assert.equal(tokenPuts[0].key, `token:${hash('opaque-1opaque-2')}`);
+  assert.equal(tokenPuts[0].ttl, 300);
+  const cached = JSON.parse(tokenPuts[0].value);
   assert.equal(cached.row, 2);
   assert.equal(cached.identityHash, hash('attendee:0912345678\nlin@example.com'));
   assert.equal(typeof cached.issuedAt, 'number');
   assert.equal(JSON.stringify(cached).includes('0912345678'), false);
   assert.equal(JSON.stringify(cached).includes('lin@example.com'), false);
-  assert.equal(state.puts[0].key.includes('opaque-1opaque-2'), false);
+  assert.equal(tokenPuts[0].key.includes('opaque-1opaque-2'), false);
+  state.puts
+    .filter(put => put.key.startsWith('rl:'))
+    .forEach(put => {
+      assert.equal(put.key.includes('0912345678'), false, 'rate-limit key leaked phone');
+      assert.equal(put.key.includes('lin@example.com'), false, 'rate-limit key leaked email');
+    });
 });
 
 test('lookup maps normalized email, missing, conflict, checked-in, and invalid values', () => {
@@ -135,7 +144,7 @@ test('lookup invalidates stale row indexes before issuing an identity-bound toke
   assert.equal(result.code, 'FOUND');
   assert.equal(state.invalidations, 1);
   assert.equal(state.phoneLookups, 2);
-  const cached = JSON.parse(state.puts.at(-1).value);
+  const cached = JSON.parse(state.puts.filter(put => put.key.startsWith('token:')).at(-1).value);
   assert.equal(cached.row, 3);
   assert.equal(cached.identityHash, hash('attendee:0912345678\nlin@example.com'));
 });
@@ -205,14 +214,15 @@ test('walk-in validates release gates and maps repository outcomes without ident
   assert.equal(full.gas.apiRegisterWalkIn(request('w4', { name: '陳來賓', phone: '0922334455', email: 'walkin@example.com', consent: true })).code, 'CAPACITY_REACHED');
 });
 
-test('health check exposes only release state, version, and server time', () => {
+test('health check exposes only release state, version, window state, and server time', () => {
   const { gas } = createApiHarness();
   const result = gas.apiHealthCheck(request('h1', {}));
   assert.equal(result.ok, true);
-  assert.deepEqual(Object.keys(result.data).sort(), ['privacyNoticeApproved', 'serverTime', 'version', 'walkInEnabled']);
+  assert.deepEqual(Object.keys(result.data).sort(), ['checkinOpen', 'privacyNoticeApproved', 'serverTime', 'version', 'walkInEnabled']);
   assert.equal(result.data.version, 1);
   assert.equal(result.data.walkInEnabled, true);
   assert.equal(result.data.privacyNoticeApproved, true);
+  assert.equal(result.data.checkinOpen, true);
   assert.equal(typeof result.data.serverTime, 'number');
   assertSanitized(result);
 });
