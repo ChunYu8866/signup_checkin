@@ -53,7 +53,18 @@ function doGet(event) {
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
+// 維運函式守門：這些函式只允許擁有者從 Apps Script 編輯器執行。
+// Web App 以部署者身分執行且開放匿名存取，訪客可在 Bridge 頁面用 google.script.run
+// 呼叫任何不以底線結尾的全域函式；不擋的話會洩漏名單筆數（rows）並可濫用索引重建。
+// 匿名情境下 getActiveUser 取不到 email，一律拒絕。
+function assertOperatorContext_() {
+  var email = '';
+  try { email = Session.getActiveUser().getEmail(); } catch (_error) { email = ''; }
+  if (!email) throw new Error('OPERATOR_ONLY');
+}
+
 function initializeSheet() {
+  assertOperatorContext_();
   var sheet = getSheet_();
   var current = sheet.getRange(1, 1, 1, CHECKIN.HEADERS.length).getDisplayValues()[0];
   if (current.every(function (value) { return value === ''; })) {
@@ -65,6 +76,7 @@ function initializeSheet() {
 }
 
 function validateDeployment() {
+  assertOperatorContext_();
   var spreadsheet = SpreadsheetApp.openById(CHECKIN.SHEET_ID);
   if (spreadsheet.getSpreadsheetTimeZone() !== CHECKIN.TIME_ZONE) {
     throw new Error('SHEET_TIME_ZONE_MUST_BE_ASIA_TAIPEI');
@@ -85,12 +97,14 @@ function validateDeployment() {
 }
 
 function warmIndexes() {
+  assertOperatorContext_();
   validateDeployment();
   rebuildIndexes_(getIndexGeneration_());
   return { ok: true };
 }
 
 function refreshIndexes() {
+  assertOperatorContext_();
   validateDeployment();
   invalidateIndexes_();
   rebuildIndexes_(getIndexGeneration_());
