@@ -23,6 +23,17 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # 只壓縮「部署出去」的版本：repo 原始碼維持可讀，開發與測試不受影響。
+      # 壓縮是為了載入速度與避免程式碼被輕易翻閱，不是安全機制（防護皆在後端）。
+      - name: Minify deployed assets
+        run: |
+          npx --yes esbuild@0.25.0 web/assets/js/*.js --minify --target=es2020 --outdir=web/assets/js --allow-overwrite
+          npx --yes esbuild@0.25.0 web/assets/css/app.css --minify --outfile=web/assets/css/app.css --allow-overwrite
+          rm -f web/test-checkin.cjs
       - name: Configure Pages
         uses: actions/configure-pages@v5
         with:
