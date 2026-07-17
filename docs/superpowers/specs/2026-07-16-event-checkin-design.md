@@ -9,7 +9,7 @@
 >
 > - Apps Script 的 `doPost(e)` **無法讀取 HTTP `Origin` 標頭**，因此本文 §3.2、§13.2、§15 所述的「來源白名單（ALLOWED_ORIGINS）」在 `fetch` 路徑下**不再具強制力**，`FORBIDDEN_ORIGIN` 不會由後端主動回傳。部署存取權為「任何人（含匿名）」，等同於端點對外公開。
 > - 現存的補償控制仍然有效：查詢僅回傳遮罩姓名、確認報到必須使用查詢後產生的短效憑證、現場報名受 `WALK_IN_ENABLED` 與個資核准雙重閘門控管、寫入使用 `LockService` 並有人數上限。殘餘風險主要是「以已知手機/E-mail 探測是否在名單中」與「對已知聯絡人惡意報到」，對本次單日活動屬可接受範圍。
-> - **補償控制新增（2026-07-17）**：**近似速率限制**——同一識別每 10 分鐘至多 12 次查詢、全站每分鐘至多 240 次查詢、現場報名全站每分鐘至多 20 筆，超量回 `BUSY` 交由前端等候室退避，抑制名單探測與現場報名灌水（`CacheService` 計數非原子，屬濫用抑制而非精確配額）。曾評估「報到時間窗」（活動期間外回絕請求）方案，因營運彈性考量由主辦方決定不採用；活動結束後應直接封存或停用 Web App 部署以關閉端點。另補「**維運函式守門**」：`initializeSheet`／`validateDeployment`／`warmIndexes`／`refreshIndexes` 以 `Session.getActiveUser()` 驗證執行者，匿名 Web App 情境（含經 Bridge 頁面的 `google.script.run`）一律拋出 `OPERATOR_ONLY`，防止匿名者讀取名單筆數或濫用索引重建耗損配額。
+> - **補償控制新增（2026-07-17）**：**近似速率限制**——同一識別每 10 分鐘至多 12 次查詢、全站每分鐘至多 240 次查詢、現場報名全站每分鐘至多 20 筆，超量回 `BUSY` 交由前端等候室退避，抑制名單探測與現場報名灌水（`CacheService` 計數非原子，屬濫用抑制而非精確配額）。曾評估「報到時間窗」（活動期間外回絕請求）方案，因營運彈性考量由主辦方決定不採用；活動結束後應直接封存或停用 Web App 部署以關閉端點。另補「**維運函式守門**」：`initializeSheet`／`validateDeployment`／`warmIndexes`／`refreshIndexes` 要求 `Session.getActiveUser()` 與 `Session.getEffectiveUser()` 相同（呼叫者＝腳本執行身分，即編輯器執行情境）；Web App 情境（含經 Bridge 頁面的 `google.script.run`，以及同 Workspace 網域已登入訪客）一律拋出 `OPERATOR_ONLY`，防止外部呼叫者讀取名單筆數或濫用索引重建耗損配額。
 > - `doGet` / `Bridge.html` / `bridge-client.js` 暫時保留作為備援；若 `fetch` 路徑於活動前實測穩定，可再行移除。若未來需要真正的來源限制或身分驗證，需改用具伺服器端標頭存取能力的後端（如 Cloud Run）。
 
 ## 1. 目標與範圍

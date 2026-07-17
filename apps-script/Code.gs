@@ -53,14 +53,18 @@ function doGet(event) {
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
-// 維運函式守門：這些函式只允許擁有者從 Apps Script 編輯器執行。
+// 維運函式守門：這些函式只允許從 Apps Script 編輯器執行。
 // Web App 以部署者身分執行且開放匿名存取，訪客可在 Bridge 頁面用 google.script.run
 // 呼叫任何不以底線結尾的全域函式；不擋的話會洩漏名單筆數（rows）並可濫用索引重建。
-// 匿名情境下 getActiveUser 取不到 email，一律拒絕。
+// 判準是「呼叫者＝腳本目前的執行身分」：編輯器執行時兩者同為操作者本人；
+// Web App 情境 effective 恆為部署者，訪客（含同 Workspace 網域已登入者，
+// 其 getActiveUser 可取得 email）的 active 與 effective 不相等，一律拒絕。
 function assertOperatorContext_() {
-  var email = '';
-  try { email = Session.getActiveUser().getEmail(); } catch (_error) { email = ''; }
-  if (!email) throw new Error('OPERATOR_ONLY');
+  var activeEmail = '';
+  var effectiveEmail = '';
+  try { activeEmail = Session.getActiveUser().getEmail(); } catch (_error) { activeEmail = ''; }
+  try { effectiveEmail = Session.getEffectiveUser().getEmail(); } catch (_error) { effectiveEmail = ''; }
+  if (!activeEmail || activeEmail !== effectiveEmail) throw new Error('OPERATOR_ONLY');
 }
 
 function initializeSheet() {
