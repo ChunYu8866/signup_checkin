@@ -9,7 +9,7 @@ import {
   validateName,
   validatePhoneSuffix,
 } from './domain.js';
-
+​
 const state = {
   screen: 'home',
   phoneSuffix: '',
@@ -34,18 +34,18 @@ const walkInReleased = localTest
       && APP_CONFIG.privacyNoticeApproved
       && privacyNoticeText.trim(),
     );
-
+​
 function announce(text) {
   status.textContent = '';
   requestAnimationFrame(() => { status.textContent = text; });
 }
-
+​
 function escapeHtml(value) {
   const node = document.createElement('span');
   node.textContent = String(value ?? '');
   return node.innerHTML;
 }
-
+​
 function show(screen, html) {
   state.screen = screen;
   home.hidden = true;
@@ -56,7 +56,7 @@ function show(screen, html) {
   heading?.focus();
   announce(heading?.textContent ?? '畫面已更新');
 }
-
+​
 function fieldError(id, message) {
   const node = document.querySelector(`#${id}-error`);
   if (node) node.textContent = message ?? '';
@@ -64,35 +64,35 @@ function fieldError(id, message) {
   input?.setAttribute('aria-invalid', String(Boolean(message)));
   if (message) input?.focus();
 }
-
+​
 function phoneMarkup() {
   return `<h2 tabindex="-1">查詢報名資料</h2><form id="phone-form" novalidate><label for="phone">手機號碼後 8 碼</label><div class="phone-field"><span>09</span><input id="phone" name="phone" type="text" inputmode="numeric" autocomplete="tel-national" maxlength="8" value="${escapeHtml(state.phoneSuffix)}" aria-describedby="phone-error"></div><p id="phone-error" class="field-error"></p><button class="button button--primary" type="submit">查詢報名資料</button><button class="button button--text" type="button" data-home>返回</button></form>`;
 }
-
+​
 function emailMarkup() {
   return `<h2 tabindex="-1">改用 E-mail 查詢</h2><p>手機查無報名資料，請輸入報名時使用的 E-mail。</p><form id="email-form" novalidate><label for="email">E-mail</label><input id="email" type="email" inputmode="email" autocomplete="email" maxlength="254" value="${escapeHtml(state.email)}" aria-describedby="email-error"><p id="email-error" class="field-error"></p><button class="button button--primary" type="submit">使用 E-mail 查詢</button><button class="button button--text" type="button" data-home>返回</button></form>`;
 }
-
+​
 function confirmMarkup() {
   return `<h2 tabindex="-1">確認報到資料</h2><p>請確認以下姓名是否為本人：</p><p class="masked-name">${escapeHtml(state.maskedName)}</p><button id="confirm" class="button button--primary" type="button">確認報到</button><button class="button button--text" type="button" data-home>不是本人，重新查詢</button>`;
 }
-
+​
 function walkInMarkup() {
   return `<h2 tabindex="-1">現場報名</h2><form id="walk-in-form" novalidate><label for="name">姓名</label><input id="name" autocomplete="name" maxlength="50" value="${escapeHtml(state.name)}" aria-describedby="name-error"><p id="name-error" class="field-error"></p><label for="walk-phone">手機號碼後 8 碼</label><div class="phone-field"><span>09</span><input id="walk-phone" type="text" inputmode="numeric" autocomplete="tel-national" maxlength="8" value="${escapeHtml(state.phoneSuffix)}" aria-describedby="walk-phone-error"></div><p id="walk-phone-error" class="field-error"></p><label for="walk-email">E-mail</label><input id="walk-email" type="email" inputmode="email" autocomplete="email" maxlength="254" value="${escapeHtml(state.email)}" aria-describedby="walk-email-error"><p id="walk-email-error" class="field-error"></p><details><summary>個人資料蒐集與使用說明</summary><div id="privacy-notice">${escapeHtml(privacyNoticeText)}</div></details><label class="consent"><input id="privacy-consent" type="checkbox" aria-describedby="privacy-consent-error">我已閱讀並同意個人資料蒐集告知</label><p id="privacy-consent-error" class="field-error"></p><button class="button button--primary" type="submit">完成現場報名與報到</button><button class="button button--text" type="button" data-home>返回</button></form>`;
 }
-
+​
 function renderPhone(error) {
   show('phone', phoneMarkup());
   bindPhoneForm();
   if (error) fieldError('phone', error);
 }
-
+​
 function renderEmail(error) {
   show('email', emailMarkup());
   bindEmailForm();
   if (error) fieldError('email', error);
 }
-
+​
 async function call(action, payload, requestId = crypto.randomUUID()) {
   state.lastAction = { action, payload, requestId };
   return runWithWaitingRoom(
@@ -106,7 +106,7 @@ async function call(action, payload, requestId = crypto.randomUUID()) {
     { ...localTest?.retryOptions, requestId },
   );
 }
-
+​
 function restoreLastActionForEditing() {
   const action = state.lastAction?.action;
   if (action === 'lookupByPhone') {
@@ -131,12 +131,12 @@ function restoreLastActionForEditing() {
   }
   location.reload();
 }
-
+​
 function renderActionableError(response) {
   const requestId = escapeHtml(response?.requestId ?? state.lastAction?.requestId ?? '無');
   show('error', `<h2 tabindex="-1">目前無法完成報到</h2><p>請再次嘗試，或返回修改資料。</p><p>請求編號：${requestId}</p><button id="retry" class="button button--primary" type="button">再次嘗試</button><button class="button button--text" type="button" data-edit>返回修改資料</button>`);
 }
-
+​
 function restoreInvalidInput() {
   const action = state.lastAction?.action;
   if (action === 'lookupByPhone') return renderPhone('輸入資料格式有誤，請重新確認');
@@ -149,7 +149,7 @@ function restoreInvalidInput() {
   }
   show('error', '<h2 tabindex="-1">輸入資料格式有誤</h2><p>請重新查詢後再試。</p>');
 }
-
+​
 function handleResponse(response) {
   const data = response?.data ?? {};
   if (response?.code === 'NOT_FOUND') {
@@ -190,7 +190,7 @@ function handleResponse(response) {
   }
   return renderActionableError(response);
 }
-
+​
 async function createBridgeClient() {
   if (!APP_CONFIG.bridgeUrl) {
     throw Object.assign(new Error('Bridge not configured'), { code: 'SYSTEM_ERROR' });
@@ -209,7 +209,7 @@ async function createBridgeClient() {
     }
   };
 }
-
+​
 function beginWalkIn() {
   if (!walkInReleased) {
     return show('error', '<h2 tabindex="-1">現場報名尚未開放</h2><p>請洽現場工作人員。</p>');
@@ -217,7 +217,7 @@ function beginWalkIn() {
   show('walkIn', walkInMarkup());
   bindWalkInForm();
 }
-
+​
 function bindPhoneForm() {
   const form = document.querySelector('#phone-form');
   const input = document.querySelector('#phone');
@@ -240,7 +240,7 @@ function bindPhoneForm() {
     handleResponse(await call('lookupByPhone', { phone: fullPhone(state.phoneSuffix) }));
   });
 }
-
+​
 function bindEmailForm() {
   const form = document.querySelector('#email-form');
   const input = document.querySelector('#email');
@@ -258,7 +258,7 @@ function bindEmailForm() {
     handleResponse(await call('lookupByEmail', { email: normalizeEmail(state.email) }));
   });
 }
-
+​
 function bindWalkInForm() {
   const form = document.querySelector('#walk-in-form');
   const phone = document.querySelector('#walk-phone');
@@ -297,7 +297,7 @@ function bindWalkInForm() {
     }));
   });
 }
-
+​
 document.querySelector('#pre-registered').addEventListener('click', () => renderPhone());
 document.querySelector('#walk-in').addEventListener('click', beginWalkIn);
 if (walkInReleased) {
@@ -326,5 +326,5 @@ host.addEventListener('click', async event => {
 addEventListener('popstate', () => {
   if (state.screen !== 'home') location.reload();
 });
-
+​
 document.documentElement.dataset.appReady = 'true';
