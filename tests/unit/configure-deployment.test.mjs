@@ -17,6 +17,22 @@ test('renders exact observed deployment values and all frontend-required fields'
   assert.deepEqual(output.origins, ['https://owner.github.io']);
 });
 
+test('carries an approved HTTPS privacy notice URL into the frontend config and rejects non-HTTPS', () => {
+  const output = renderConfig({
+    bridgeUrl: 'https://script.google.com/macros/s/abc/exec',
+    pagesUrl: 'https://owner.github.io/repo/',
+    walkInEnabled: true,
+    privacyNoticeApproved: true,
+    approvedNoticeUrl: 'https://www.entrust.com.tw/entrust/footer/statement.do?id=abc123',
+  });
+  assert.match(output.web, /privacyNoticeUrl: "https:\/\/www\.entrust\.com\.tw\/entrust\/footer\/statement\.do\?id=abc123"/);
+  assert.throws(() => renderConfig({
+    bridgeUrl: 'https://script.google.com/macros/s/abc/exec',
+    pagesUrl: 'https://owner.github.io/repo/',
+    approvedNoticeUrl: 'http://insecure.example.com/notice',
+  }));
+});
+
 test('defaults every release gate and approved notice closed', () => {
   const output = renderConfig({
     bridgeUrl: 'https://script.google.com/macros/s/abc/exec',

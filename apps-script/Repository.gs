@@ -70,6 +70,9 @@ function resolveConfirmationAttendee_(row, identityHash, sheet) {
   if (!validAttendeeIdentityHash_(identityHash)) return { kind: 'none' };
   var lastRow = sheet.getLastRow();
   var current = row >= 2 && row <= lastRow ? readAttendee_(row, sheet) : null;
+
+  // 一律掃描全表，即使 token 對應的列身分仍相符也要確認唯一性；
+  // 同一手機/E-mail 對應多筆資料時必須回報衝突，不得自動報到（規格 §12）。
   var values = lastRow >= 2 ? sheet.getRange(2, 1, lastRow - 1, 3).getValues() : [];
   var rows = [];
   values.forEach(function (value, offset) {
@@ -79,7 +82,7 @@ function resolveConfirmationAttendee_(row, identityHash, sheet) {
   });
   var classification = classifyRows_(rows);
   if (classification.kind !== 'one') return classification;
-  if (classification.row === row && current && attendeeIdentityHash_(current) === identityHash) {
+  if (current && classification.row === row && attendeeIdentityHash_(current) === identityHash) {
     return { kind: 'one', attendee: current };
   }
   return { kind: 'one', attendee: readAttendee_(classification.row, sheet) };

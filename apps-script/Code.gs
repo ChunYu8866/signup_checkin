@@ -85,3 +85,28 @@ function refreshIndexes() {
   rebuildIndexes_(getIndexGeneration_());
   return { ok: true };
 }
+
+// ====== 對外 API 通道（doPost，供 GitHub Pages 前端跨網域呼叫） ======
+function doPost(e) {
+  try {
+    var request = JSON.parse(e.postData.contents);
+    var action = request.action;
+    var result;
+    if (action === 'healthCheck') result = apiHealthCheck(request);
+    else if (action === 'lookupByPhone') result = apiLookupByPhone(request);
+    else if (action === 'lookupByEmail') result = apiLookupByEmail(request);
+    else if (action === 'confirmCheckIn') result = apiConfirmCheckIn(request);
+    else if (action === 'registerWalkIn') result = apiRegisterWalkIn(request);
+    else result = response_(request.requestId, false, CHECKIN.CODES.INVALID_INPUT);
+    
+    return ContentService.createTextOutput(JSON.stringify(result))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({
+      version: CHECKIN.VERSION,
+      requestId: typeof request !== 'undefined' && request ? request.requestId : '',
+      ok: false,
+      code: CHECKIN.CODES.SYSTEM_ERROR
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+}
