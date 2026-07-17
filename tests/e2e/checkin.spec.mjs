@@ -265,7 +265,7 @@ for (const width of [320, 375, 390, 430, 768, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/');
     await expect(page.getByRole('heading', { name: '2026 下半年投資展望會' })).toBeVisible();
-    await expect(page.getByText('2026/08/03 14:00')).toBeVisible();
+    await expect(page.getByText('2026/08/03（一）14:00')).toBeVisible();
     await expect(page.getByText('華南銀行國際會議中心')).toBeVisible();
     await expect(page.getByRole('button', { name: '我有事先報名' })).toBeVisible();
     await expect(page.getByRole('button', { name: '我要現場報名' })).toBeEnabled();
