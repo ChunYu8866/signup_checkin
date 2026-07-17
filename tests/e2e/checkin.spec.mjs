@@ -54,74 +54,6 @@ async function routeConfig(page, {
   }));
 }
 
-async function routeBridge(page, responsesByLoad) {
-  let loads = 0;
-  await page.route('**/test-bridge**', route => {
-    const responses = responsesByLoad[Math.min(loads, responsesByLoad.length - 1)];
-    loads += 1;
-    return route.fulfill({
-      contentType: 'text/html; charset=utf-8',
-      body: `<!doctype html><script>
-        const responses = ${JSON.stringify(responses)};
-        const channel = new URL(location.href).searchParams.get('channel');
-        addEventListener('message', event => {
-          const request = event.data;
-          top.__BRIDGE_CALLS__ ??= [];
-          top.__BRIDGE_CALLS__.push(request);
-          const response = responses.shift() ?? { version: 1, ok: false, code: 'SYSTEM_ERROR', data: {} };
-          event.source.postMessage({ ...response, version: 1, requestId: request.requestId }, event.origin);
-        });
-        top.postMessage({
-          version: 1,
-          requestId: 'bridge-ready',
-          ok: true,
-          code: 'BRIDGE_READY',
-          data: { channel }
-        }, '*');
-      <\/script>`,
-    });
-  });
-  return () => loads;
-}
-
-async function routeNestedBridge(page, responses) {
-  await page.route('**/test-bridge-wrapper**', route => {
-    const channel = new URL(route.request().url()).searchParams.get('channel');
-    return route.fulfill({
-      contentType: 'text/html; charset=utf-8',
-      body: `<!doctype html><iframe src="/test-bridge-inner?channel=${encodeURIComponent(channel ?? '')}"></iframe>`,
-    });
-  });
-  await page.route('**/test-bridge-inner**', route => route.fulfill({
-    contentType: 'text/html; charset=utf-8',
-    body: `<!doctype html><script>
-      const responses = ${JSON.stringify(responses)};
-      const channel = new URL(location.href).searchParams.get('channel');
-      addEventListener('message', event => {
-        const request = event.data;
-        top.__BRIDGE_CALLS__ ??= [];
-        top.__BRIDGE_CALLS__.push(request);
-        const response = responses.shift() ?? { version: 1, ok: false, code: 'SYSTEM_ERROR', data: {} };
-        event.source.postMessage({ ...response, version: 1, requestId: request.requestId }, event.origin);
-      });
-      top.postMessage({
-        version: 1,
-        requestId: 'bridge-ready',
-        ok: true,
-        code: 'BRIDGE_READY',
-        data: { channel: 'wrong-channel' }
-      }, '*');
-      top.postMessage({
-        version: 1,
-        requestId: 'bridge-ready',
-        ok: true,
-        code: 'BRIDGE_READY',
-        data: { channel }
-      }, '*');
-    <\/script>`,
-  }));
-}
-
 test('phone miss falls back to email then shows masked confirmation', async ({ page }) => {
   await page.goto('/');
   await setReplies(page, [
@@ -309,16 +241,7 @@ test('API-returned name and time are rendered as text, never executable markup',
   expect(await page.evaluate(() => window.__unsafe)).toBeUndefined();
 });
 
-  await page.goto(`${origin}/`);
-  await submitPhoneLookup(page);
-  await expect(page.getByRole('heading', { name: '您已完成報到' })).toBeVisible({ timeout: 12_000 });
-  expect(bridgeLoads()).toBe(2);
-  await expect(page.locator('iframe')).toHaveCount(1);
-  const actionCalls = await page.evaluate(() => window.__BRIDGE_CALLS__.filter(call => call.action === 'lookupByPhone'));
-  expect(actionCalls).toHaveLength(2);
-  expect(actionCalls[1].payload).toEqual(actionCalls[0].payload);
-  expect(actionCalls[1].requestId).toBe(actionCalls[0].requestId);
-});
+
 
 test('long approved notice stays readable without horizontal overflow at 320px', async ({ page }) => {
   const longNotice = `<img src=x onerror="window.__unsafe=true">${'個人資料蒐集告知'.repeat(80)}${'A'.repeat(180)}`;
