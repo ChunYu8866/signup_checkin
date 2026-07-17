@@ -57,7 +57,7 @@ test('rejects non-https, non-exec, credentialed, query, and unapproved release v
   ]) assert.throws(() => renderConfig({ ...base, ...overrides }));
 });
 
-function operationsHarness({ headers, attendeeRows = 2, sheetZone = 'Asia/Taipei', scriptZone = 'Asia/Taipei', origins = ['https://owner.github.io'], operatorEmail = 'owner@example.com' } = {}) {
+function operationsHarness({ headers, attendeeRows = 2, sheetZone = 'Asia/Taipei', scriptZone = 'Asia/Taipei', origins = ['https://owner.github.io'], operatorEmail = 'owner@example.com', effectiveEmail } = {}) {
   const expected = ['姓名', '手機', 'E-mail', '報名類型', '報到狀態', '報到時間', '資料建立時間'];
   const state = { headers: [...(headers ?? expected)], writes: [], frozen: [], rebuilds: [], invalidations: 0, generation: 'old-generation', validationCalls: 0, events: [] };
   const sheet = {
@@ -74,6 +74,7 @@ function operationsHarness({ headers, attendeeRows = 2, sheetZone = 'Asia/Taipei
     Session: {
       getScriptTimeZone: () => scriptZone,
       getActiveUser: () => ({ getEmail: () => operatorEmail }),
+      getEffectiveUser: () => ({ getEmail: () => effectiveEmail ?? operatorEmail }),
     },
     PropertiesService: { getScriptProperties: () => ({ getProperty: key => ({ ALLOWED_ORIGINS: JSON.stringify(origins), WALK_IN_ENABLED: 'false', PRIVACY_NOTICE_APPROVED: 'false' })[key] ?? null }) },
     HtmlService: { createTemplateFromFile() {}, XFrameOptionsMode: { ALLOWALL: 'ALLOWALL' } },
@@ -110,6 +111,11 @@ test('operations functions refuse anonymous web-app callers and stay editor-only
     assert.throws(() => anonymous.gas[name](), /OPERATOR_ONLY/, `${name} must reject anonymous callers`);
     assert.deepEqual(anonymous.state.writes, []);
     assert.deepEqual(anonymous.state.rebuilds, []);
+
+    // 同 Workspace 網域的已登入訪客：getActiveUser 有 email，但不等於執行身分（部署者），仍須拒絕。
+    const sameDomainVisitor = operationsHarness({ operatorEmail: 'colleague@corp.example', effectiveEmail: 'owner@corp.example' });
+    assert.throws(() => sameDomainVisitor.gas[name](), /OPERATOR_ONLY/, `${name} must reject same-domain visitors`);
+    assert.deepEqual(sameDomainVisitor.state.rebuilds, []);
   }
   const broken = operationsHarness();
   broken.gas.Session = undefined;

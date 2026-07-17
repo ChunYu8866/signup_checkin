@@ -159,6 +159,7 @@ function createHarness(options = {}) {
       Session: {
         getScriptTimeZone: () => 'Asia/Taipei',
         getActiveUser: () => ({ getEmail: () => 'owner@example.com' }),
+        getEffectiveUser: () => ({ getEmail: () => 'owner@example.com' }),
       },
       PropertiesService: {
         getScriptProperties: () => ({
