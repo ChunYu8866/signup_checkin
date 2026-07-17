@@ -15,6 +15,7 @@ export function renderConfig({
   walkInEnabled = false,
   privacyNoticeApproved = false,
   approvedNotice = '',
+  approvedNoticeUrl = '',
 }) {
   const bridge = observedUrl(bridgeUrl, 'Bridge URL');
   const pages = observedUrl(pagesUrl, 'Pages URL');
@@ -24,8 +25,16 @@ export function renderConfig({
   const enabled = walkInEnabled === true;
   const approved = privacyNoticeApproved === true;
   const notice = String(approvedNotice || '').trim();
-  if (enabled && (!approved || !notice)) {
-    throw new Error('Walk-in release requires approved privacy notice text');
+  let noticeUrl = String(approvedNoticeUrl || '').trim();
+  if (noticeUrl) {
+    // The notice may point at an official policy page, which legitimately carries a query string
+    // (e.g. ?id=...), so only enforce HTTPS here rather than the strict observedUrl() shape.
+    const parsed = new URL(noticeUrl);
+    if (parsed.protocol !== 'https:') throw new Error('Privacy notice URL must be an HTTPS URL');
+    noticeUrl = parsed.href;
+  }
+  if (enabled && (!approved || (!notice && !noticeUrl))) {
+    throw new Error('Walk-in release requires an approved privacy notice (text or URL)');
   }
   const web = `export const APP_CONFIG = Object.freeze({
   bridgeUrl: ${JSON.stringify(bridge.href)},
@@ -33,6 +42,7 @@ export function renderConfig({
   walkInEnabled: ${enabled},
   privacyNoticeApproved: ${approved},
   privacyNoticeText: ${JSON.stringify(approved ? notice : '')},
+  privacyNoticeUrl: ${JSON.stringify(approved ? noticeUrl : '')},
 });
 `;
   return { web, origins: [pages.origin] };
@@ -48,6 +58,7 @@ if (fileURLToPath(import.meta.url) === process.argv[1]) {
     walkInEnabled: args['--walk-in-enabled'] === 'true',
     privacyNoticeApproved: args['--privacy-approved'] === 'true',
     approvedNotice: args['--approved-notice'] || '',
+    approvedNoticeUrl: args['--approved-notice-url'] || '',
   });
   fs.writeFileSync(new URL('../web/assets/js/config.js', import.meta.url), output.web, 'utf8');
   process.stdout.write(`${JSON.stringify({ allowedOrigins: output.origins })}\n`);
