@@ -1,5 +1,4 @@
 import { APP_CONFIG } from './config.js';
-import { BridgeClient, resolveBridgeOrigin } from './bridge-client.js';
 import { runWithWaitingRoom } from './retry.js';
 import {
   fullPhone,
@@ -192,83 +191,23 @@ function handleResponse(response) {
   return renderActionableError(response);
 }
 
-let bridgePromise;
-function createBridgeClient() {
-  if (bridgePromise) return bridgePromise;
+async function createBridgeClient() {
   if (!APP_CONFIG.bridgeUrl) {
-    return Promise.reject(Object.assign(new Error('Bridge not configured'), { code: 'SYSTEM_ERROR' }));
+    throw Object.assign(new Error('Bridge not configured'), { code: 'SYSTEM_ERROR' });
   }
-
-  const promise = new Promise((resolve, reject) => {
-    const frame = document.createElement('iframe');
-    const channel = crypto.randomUUID();
-    const bridgeUrl = new URL(APP_CONFIG.bridgeUrl);
-    bridgeUrl.searchParams.set('channel', channel);
-    let client;
-    let settled = false;
-    let readyHandled = false;
-    let timer;
-    const fail = error => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      removeEventListener('message', onReady);
-      client?.destroy();
-      frame.remove();
-      reject(error);
-    };
-    const onReady = async event => {
-      const message = event.data;
-      const observedBridgeOrigin = resolveBridgeOrigin(APP_CONFIG.bridgeOrigin, event.origin);
-      if (
-        readyHandled ||
-        !observedBridgeOrigin ||
-        !event.source ||
-        typeof event.source.postMessage !== 'function' ||
-        !message ||
-        message.version !== 1 ||
-        message.code !== 'BRIDGE_READY' ||
-        message.data?.channel !== channel
-      ) return;
-
-      readyHandled = true;
-      removeEventListener('message', onReady);
-      try {
-        client = new BridgeClient({
-          targetWindow: event.source,
-          targetOrigin: observedBridgeOrigin,
-        });
-        const health = await client.request('healthCheck', {});
-        if (!health.ok) {
-          throw Object.assign(new Error('Bridge health check failed'), {
-            code: 'NETWORK_RETRYABLE',
-          });
-        }
-        settled = true;
-        clearTimeout(timer);
-        resolve(client);
-      } catch (error) {
-        fail(error);
+  return {
+    request: async (action, payload, requestId) => {
+      const response = await fetch(APP_CONFIG.bridgeUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ version: 1, requestId, action, payload })
+      });
+      if (!response.ok) {
+        throw Object.assign(new Error('Network error'), { code: 'NETWORK_RETRYABLE' });
       }
-    };
-    frame.hidden = true;
-    frame.title = '報到系統安全連線';
-    frame.src = bridgeUrl.toString();
-    timer = setTimeout(
-      () => fail(Object.assign(new Error('Bridge load timeout'), { code: 'NETWORK_RETRYABLE' })),
-      30000,
-    );
-    addEventListener('message', onReady);
-    frame.addEventListener('error', () => {
-      fail(Object.assign(new Error('Bridge load failed'), { code: 'NETWORK_RETRYABLE' }));
-    }, { once: true });
-    document.body.append(frame);
-  });
-  bridgePromise = promise;
-  void promise.catch(() => {
-    if (bridgePromise === promise) bridgePromise = undefined;
-  });
-  return bridgePromise;
+      return await response.json();
+    }
+  };
 }
 
 function beginWalkIn() {
