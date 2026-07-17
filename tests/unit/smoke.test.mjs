@@ -16,3 +16,14 @@ test('GitHub Pages workflow publishes only the web artifact from main', () => {
   assert.match(workflow, /path:\s*\.\/web/);
   assert.match(workflow, /actions\/deploy-pages@v4/);
 });
+
+test('deployed assets are minified and test scripts are stripped before upload', () => {
+  const workflow = fs.readFileSync('.github/workflows/pages.yml', 'utf8');
+  const minifyIndex = workflow.indexOf('Minify deployed assets');
+  const uploadIndex = workflow.indexOf('actions/upload-pages-artifact');
+  assert.ok(minifyIndex > -1, 'pages workflow must minify assets');
+  assert.ok(minifyIndex < uploadIndex, 'minify must run before the artifact upload');
+  assert.match(workflow, /esbuild@\d+\.\d+\.\d+ web\/assets\/js\/\*\.js --minify/);
+  assert.match(workflow, /esbuild@\d+\.\d+\.\d+ web\/assets\/css\/app\.css --minify/);
+  assert.match(workflow, /rm -f web\/test-checkin\.cjs/);
+});
