@@ -193,6 +193,9 @@ function handleResponse(response) {
   if (response?.code === 'TOKEN_EXPIRED') {
     return state.phoneSuffix ? renderPhone() : renderEmail();
   }
+  if (response?.code === 'NOT_OPEN') {
+    return show('closed', '<h2 tabindex="-1">報到尚未開放</h2><p>報到功能僅於活動期間開放，請於活動當日再使用。</p>');
+  }
   if (response?.code === 'INVALID_INPUT') return restoreInvalidInput();
   if (response?.code === 'FORBIDDEN_ORIGIN') {
     return show('error', '<h2 tabindex="-1">系統設定錯誤</h2><p>目前無法從這個網站進行報到，請洽現場工作人員。</p>');

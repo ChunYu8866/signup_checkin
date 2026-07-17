@@ -35,6 +35,24 @@ node scripts/configure-deployment.mjs --bridge-url $bridge --pages-url $pages
 
 CLI 僅可輸出要填入 Script Properties `ALLOWED_ORIGINS` 的精確 origin。正式開放現場報名前，另須確認法務／法遵核准文字已完整提供，再使用 `--privacy-approved true --walk-in-enabled true --approved-notice <核准文字>` 產生設定。任一核准條件不足時維持兩個 gate 為 `false`。
 
+### 3.1 Script Properties 一覽
+
+| 屬性 | 值 | 說明 |
+| --- | --- | --- |
+| `ALLOWED_ORIGINS` | JSON 陣列 | 允許的前端 origin（doGet／Bridge 備援路徑使用；doPost 路徑讀不到 Origin、無法強制） |
+| `WALK_IN_ENABLED` | `true`／`false` | 現場報名總開關 |
+| `PRIVACY_NOTICE_APPROVED` | `true`／`false` | 個資告知核准開關 |
+| `CHECKIN_OPEN_FROM` | ISO 8601 含時區 | 選填；報到開放起點。未設定時採預設 `2026-08-02T00:00:00+08:00` |
+| `CHECKIN_OPEN_UNTIL` | ISO 8601 含時區 | 選填；報到開放終點。未設定時採預設 `2026-08-04T00:00:00+08:00` |
+
+報到時間窗與速率限制注意事項：
+
+- 時間窗以外，查詢／確認報到／現場報名一律回 `NOT_OPEN`；`healthCheck` 不受限並回報 `checkinOpen` 供監控。
+- 活動前需要實測時，把 `CHECKIN_OPEN_FROM` 暫設為測試當天（例如 `2026-07-17T00:00:00+08:00`），測畢**刪除該屬性**即恢復預設窗、重新上鎖端點。
+- 屬性格式錯誤時，後端自動退回預設窗以避免活動日停擺；`validateDeployment()` 會對格式錯誤的視窗屬性直接拋錯，發布前必跑。
+- Script Properties 修改即時生效，不需重新部署版本。
+- 後端另有近似速率限制（同一手機／E-mail 查詢每 10 分鐘 12 次、全站查詢每分鐘 240 次、現場報名全站每分鐘 10 筆），超量回 `BUSY` 由前端等候室退避。活動日若監控看到大量 `BUSY` 且現場人流不多，優先懷疑自動化濫用而非容量不足。
+
 ## 4. 裝置驗收
 
 - 使用實機 iPhone 掃 QR code：完成手機查詢、E-mail fallback、遮罩確認及報到；不得出現水平捲動或原始個資。

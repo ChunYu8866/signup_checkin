@@ -1,0 +1,191 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import { loadGas } from '../../scripts/load-gas.mjs';
+
+const attendees = new Map([
+  [2, { row: 2, name: '林小宇', phone: '0912345678', email: 'lin@example.com', status: '', checkedInAt: '' }],
+]);
+
+// 固定 vm 內的時鐘：速率限制 bucket 不會在測試中跨越時間邊界，也讓時間窗測試可預期。
+const FIXED_NOW = Date.parse('2026-08-03T06:00:00Z');
+class FakeDate extends Date {
+  constructor(...args) {
+    if (args.length === 0) super(FIXED_NOW);
+    else super(...args);
+  }
+  static now() { return FIXED_NOW; }
+}
+
+function createGuardHarness(options = {}) {
+  const state = {
+    cache: new Map(), puts: [], confirms: 0, registers: 0, uuid: 0,
+    properties: {
+      ALLOWED_ORIGINS: '["https://example.github.io"]',
+      WALK_IN_ENABLED: 'true',
+      PRIVACY_NOTICE_APPROVED: 'true',
+      ...options.properties,
+    },
+  };
+  const cache = {
+    get: key => state.cache.has(key) ? state.cache.get(key) : null,
+    put(key, value, ttl) { state.puts.push({ key, value, ttl }); state.cache.set(key, value); },
+    remove(key) { state.cache.delete(key); },
+  };
+  const Utilities = {
+    DigestAlgorithm: { SHA_256: 'SHA_256' }, Charset: { UTF_8: 'UTF_8' },
+    computeDigest(_algorithm, value) {
+      return [...crypto.createHash('sha256').update(String(value), 'utf8').digest()]
+        .map(byte => byte > 127 ? byte - 256 : byte);
+    },
+    getUuid() { state.uuid += 1; return `opaque-${state.uuid}`; },
+    formatDate(_date, zone, pattern) { return `${zone}:${pattern}`; },
+  };
+  const globals = {
+    Date: FakeDate,
+    Utilities,
+    CacheService: { getScriptCache: () => cache },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: key => state.properties[key] ?? null }) },
+    lookupByPhone_: value => value === '0912345678' ? [2] : [],
+    lookupByEmail_: value => value === 'lin@example.com' ? [2] : [],
+    classifyRows_: rows => rows.length === 0 ? { kind: 'none' } : rows.length === 1 ? { kind: 'one', row: rows[0] } : { kind: 'conflict' },
+    readAttendee_: row => attendees.get(row),
+    confirmRow_: () => { state.confirms += 1; return { code: 'CHECKED_IN', checkedInAt: new Date('2026-08-03T06:00:00Z') }; },
+    registerWalkIn_: () => { state.registers += 1; return { code: 'WALK_IN_REGISTERED', row: 4 }; },
+    invalidateIndexes_: () => {},
+  };
+  const gas = loadGas(['Config.gs', 'Domain.gs', 'Api.gs', 'Code.gs'], globals);
+  return { gas, state };
+}
+
+function request(requestId, payload) {
+  return { version: 1, requestId, payload };
+}
+
+function isoOffset(deltaMs) {
+  return new Date(FIXED_NOW + deltaMs).toISOString();
+}
+
+test('default window opens only around event day when properties are absent', () => {
+  const { gas } = createGuardHarness({
+    properties: { CHECKIN_OPEN_FROM: null, CHECKIN_OPEN_UNTIL: null },
+  });
+  assert.equal(gas.isCheckinOpen_(Date.parse('2026-07-17T12:00:00+08:00')), false);
+  assert.equal(gas.isCheckinOpen_(Date.parse('2026-08-01T23:59:59+08:00')), false);
+  assert.equal(gas.isCheckinOpen_(Date.parse('2026-08-02T00:00:00+08:00')), true);
+  assert.equal(gas.isCheckinOpen_(Date.parse('2026-08-03T14:00:00+08:00')), true);
+  assert.equal(gas.isCheckinOpen_(Date.parse('2026-08-03T23:59:59+08:00')), true);
+  assert.equal(gas.isCheckinOpen_(Date.parse('2026-08-04T00:00:00+08:00')), false);
+  assert.equal(gas.isCheckinOpen_(Date.parse('2026-08-10T12:00:00+08:00')), false);
+});
+
+test('window properties override defaults and unparseable values fall back to defaults', () => {
+  const overridden = createGuardHarness({
+    properties: {
+      CHECKIN_OPEN_FROM: '2026-07-17T00:00:00+08:00',
+      CHECKIN_OPEN_UNTIL: '2026-07-18T00:00:00+08:00',
+    },
+  });
+  assert.equal(overridden.gas.isCheckinOpen_(Date.parse('2026-07-17T12:00:00+08:00')), true);
+  assert.equal(overridden.gas.isCheckinOpen_(Date.parse('2026-08-03T14:00:00+08:00')), false);
+
+  const garbage = createGuardHarness({
+    properties: { CHECKIN_OPEN_FROM: 'not-a-date', CHECKIN_OPEN_UNTIL: '' },
+  });
+  assert.equal(garbage.gas.isCheckinOpen_(Date.parse('2026-08-03T14:00:00+08:00')), true);
+  assert.equal(garbage.gas.isCheckinOpen_(Date.parse('2026-07-17T12:00:00+08:00')), false);
+});
+
+test('closed window rejects lookup, confirm, and walk-in without doing any work', () => {
+  const closed = {
+    CHECKIN_OPEN_FROM: isoOffset(-2 * 3600 * 1000),
+    CHECKIN_OPEN_UNTIL: isoOffset(-1 * 3600 * 1000),
+  };
+  const { gas, state } = createGuardHarness({ properties: closed });
+
+  const lookup = gas.apiLookupByPhone(request('g1', { phone: '0912345678' }));
+  const email = gas.apiLookupByEmail(request('g2', { email: 'lin@example.com' }));
+  const confirm = gas.apiConfirmCheckIn(request('g3', { token: 'any-token' }));
+  const walkIn = gas.apiRegisterWalkIn(request('g4', { name: '陳來賓', phone: '0922334455', email: 'walkin@example.com', consent: true }));
+
+  for (const result of [lookup, email, confirm, walkIn]) {
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'NOT_OPEN');
+    assert.deepEqual({ ...result.data }, {});
+  }
+  assert.equal(state.confirms, 0);
+  assert.equal(state.registers, 0);
+  assert.equal(state.puts.filter(put => put.key.startsWith('token:')).length, 0);
+
+  const health = gas.apiHealthCheck(request('g5', {}));
+  assert.equal(health.ok, true);
+  assert.equal(health.data.checkinOpen, false);
+});
+
+test('open window via properties allows the full flow', () => {
+  const open = {
+    CHECKIN_OPEN_FROM: isoOffset(-3600 * 1000),
+    CHECKIN_OPEN_UNTIL: isoOffset(3600 * 1000),
+  };
+  const { gas, state } = createGuardHarness({ properties: open });
+  assert.equal(gas.apiLookupByPhone(request('o1', { phone: '0912345678' })).code, 'FOUND');
+  assert.equal(gas.apiRegisterWalkIn(request('o2', { name: '陳來賓', phone: '0922334455', email: 'walkin@example.com', consent: true })).code, 'WALK_IN_REGISTERED');
+  assert.equal(state.registers, 1);
+});
+
+function openProperties() {
+  return {
+    CHECKIN_OPEN_FROM: '2000-01-01T00:00:00+08:00',
+    CHECKIN_OPEN_UNTIL: '2100-01-01T00:00:00+08:00',
+  };
+}
+
+test('per-identity lookup rate limit trips into BUSY without blocking other identities', () => {
+  const { gas } = createGuardHarness({ properties: openProperties() });
+  const limit = gas.CHECKIN.RATE_LIMITS.LOOKUP_IDENTITY.limit;
+  for (let i = 0; i < limit; i += 1) {
+    assert.equal(gas.apiLookupByPhone(request(`rl-${i}`, { phone: '0912345678' })).code, 'FOUND');
+  }
+  const tripped = gas.apiLookupByPhone(request('rl-over', { phone: '0912345678' }));
+  assert.equal(tripped.ok, false);
+  assert.equal(tripped.code, 'BUSY');
+  assert.equal(gas.apiLookupByPhone(request('rl-other', { phone: '0987654321' })).code, 'NOT_FOUND');
+});
+
+test('global lookup rate limit bounds bulk probing across identities', () => {
+  const { gas } = createGuardHarness({ properties: openProperties() });
+  const limit = gas.CHECKIN.RATE_LIMITS.LOOKUP_GLOBAL.limit;
+  for (let i = 0; i < limit; i += 1) {
+    const phone = `09${String(11000000 + i)}`;
+    assert.equal(gas.apiLookupByPhone(request(`gl-${i}`, { phone })).code, 'NOT_FOUND');
+  }
+  const tripped = gas.apiLookupByPhone(request('gl-over', { phone: '0999999999' }));
+  assert.equal(tripped.ok, false);
+  assert.equal(tripped.code, 'BUSY');
+});
+
+test('global walk-in rate limit caps registration floods', () => {
+  const { gas, state } = createGuardHarness({ properties: openProperties() });
+  const limit = gas.CHECKIN.RATE_LIMITS.WALK_IN_GLOBAL.limit;
+  for (let i = 0; i < limit; i += 1) {
+    const payload = { name: '陳來賓', phone: `09${String(22000000 + i)}`, email: `walkin${i}@example.com`, consent: true };
+    assert.equal(gas.apiRegisterWalkIn(request(`w-${i}`, payload)).code, 'WALK_IN_REGISTERED');
+  }
+  const tripped = gas.apiRegisterWalkIn(request('w-over', { name: '陳來賓', phone: '0922999999', email: 'flood@example.com', consent: true }));
+  assert.equal(tripped.ok, false);
+  assert.equal(tripped.code, 'BUSY');
+  assert.equal(state.registers, limit);
+});
+
+test('rate-limit cache keys never contain readable identities', () => {
+  const { gas, state } = createGuardHarness({ properties: openProperties() });
+  gas.apiLookupByPhone(request('k1', { phone: '0912345678' }));
+  gas.apiLookupByEmail(request('k2', { email: 'lin@example.com' }));
+  const limiterPuts = state.puts.filter(put => put.key.startsWith('rl:'));
+  assert.ok(limiterPuts.length >= 4);
+  for (const put of limiterPuts) {
+    assert.equal(put.key.includes('0912345678'), false);
+    assert.equal(put.key.includes('lin@example.com'), false);
+    assert.match(put.key, /^rl:[a-z-]+:\d+:[0-9a-f]{16}$/);
+  }
+});
