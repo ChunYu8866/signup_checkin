@@ -20,7 +20,7 @@ export function resolveBridgeOrigin(configuredOrigin, observedOrigin) {
 }
 
 export class BridgeClient {
-  constructor({ targetWindow, targetOrigin, eventSource = window, timeoutMs = 12000 }) {
+  constructor({ targetWindow, targetOrigin, eventSource = window, timeoutMs = 30000 }) {
     if (!targetWindow || !targetOrigin) throw new Error('Bridge target is required');
 
     this.targetWindow = targetWindow;
