@@ -256,7 +256,7 @@ function createBridgeClient() {
     frame.src = bridgeUrl.toString();
     timer = setTimeout(
       () => fail(Object.assign(new Error('Bridge load timeout'), { code: 'NETWORK_RETRYABLE' })),
-      12000,
+      30000,
     );
     addEventListener('message', onReady);
     frame.addEventListener('error', () => {
