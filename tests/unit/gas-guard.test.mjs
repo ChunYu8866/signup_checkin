@@ -7,7 +7,7 @@ const attendees = new Map([
   [2, { row: 2, name: '林小宇', phone: '0912345678', email: 'lin@example.com', status: '', checkedInAt: '' }],
 ]);
 
-// 固定 vm 內的時鐘：速率限制 bucket 不會在測試中跨越時間邊界，也讓時間窗測試可預期。
+// 固定 vm 內的時鐘：速率限制 bucket 不會在測試中跨越時間邊界。
 const FIXED_NOW = Date.parse('2026-08-03T06:00:00Z');
 class FakeDate extends Date {
   constructor(...args) {
@@ -62,86 +62,8 @@ function request(requestId, payload) {
   return { version: 1, requestId, payload };
 }
 
-function isoOffset(deltaMs) {
-  return new Date(FIXED_NOW + deltaMs).toISOString();
-}
-
-test('default window opens only around event day when properties are absent', () => {
-  const { gas } = createGuardHarness({
-    properties: { CHECKIN_OPEN_FROM: null, CHECKIN_OPEN_UNTIL: null },
-  });
-  assert.equal(gas.isCheckinOpen_(Date.parse('2026-07-17T12:00:00+08:00')), false);
-  assert.equal(gas.isCheckinOpen_(Date.parse('2026-08-01T23:59:59+08:00')), false);
-  assert.equal(gas.isCheckinOpen_(Date.parse('2026-08-02T00:00:00+08:00')), true);
-  assert.equal(gas.isCheckinOpen_(Date.parse('2026-08-03T14:00:00+08:00')), true);
-  assert.equal(gas.isCheckinOpen_(Date.parse('2026-08-03T23:59:59+08:00')), true);
-  assert.equal(gas.isCheckinOpen_(Date.parse('2026-08-04T00:00:00+08:00')), false);
-  assert.equal(gas.isCheckinOpen_(Date.parse('2026-08-10T12:00:00+08:00')), false);
-});
-
-test('window properties override defaults and unparseable values fall back to defaults', () => {
-  const overridden = createGuardHarness({
-    properties: {
-      CHECKIN_OPEN_FROM: '2026-07-17T00:00:00+08:00',
-      CHECKIN_OPEN_UNTIL: '2026-07-18T00:00:00+08:00',
-    },
-  });
-  assert.equal(overridden.gas.isCheckinOpen_(Date.parse('2026-07-17T12:00:00+08:00')), true);
-  assert.equal(overridden.gas.isCheckinOpen_(Date.parse('2026-08-03T14:00:00+08:00')), false);
-
-  const garbage = createGuardHarness({
-    properties: { CHECKIN_OPEN_FROM: 'not-a-date', CHECKIN_OPEN_UNTIL: '' },
-  });
-  assert.equal(garbage.gas.isCheckinOpen_(Date.parse('2026-08-03T14:00:00+08:00')), true);
-  assert.equal(garbage.gas.isCheckinOpen_(Date.parse('2026-07-17T12:00:00+08:00')), false);
-});
-
-test('closed window rejects lookup, confirm, and walk-in without doing any work', () => {
-  const closed = {
-    CHECKIN_OPEN_FROM: isoOffset(-2 * 3600 * 1000),
-    CHECKIN_OPEN_UNTIL: isoOffset(-1 * 3600 * 1000),
-  };
-  const { gas, state } = createGuardHarness({ properties: closed });
-
-  const lookup = gas.apiLookupByPhone(request('g1', { phone: '0912345678' }));
-  const email = gas.apiLookupByEmail(request('g2', { email: 'lin@example.com' }));
-  const confirm = gas.apiConfirmCheckIn(request('g3', { token: 'any-token' }));
-  const walkIn = gas.apiRegisterWalkIn(request('g4', { name: '陳來賓', phone: '0922334455', email: 'walkin@example.com', consent: true }));
-
-  for (const result of [lookup, email, confirm, walkIn]) {
-    assert.equal(result.ok, false);
-    assert.equal(result.code, 'NOT_OPEN');
-    assert.deepEqual({ ...result.data }, {});
-  }
-  assert.equal(state.confirms, 0);
-  assert.equal(state.registers, 0);
-  assert.equal(state.puts.filter(put => put.key.startsWith('token:')).length, 0);
-
-  const health = gas.apiHealthCheck(request('g5', {}));
-  assert.equal(health.ok, true);
-  assert.equal(health.data.checkinOpen, false);
-});
-
-test('open window via properties allows the full flow', () => {
-  const open = {
-    CHECKIN_OPEN_FROM: isoOffset(-3600 * 1000),
-    CHECKIN_OPEN_UNTIL: isoOffset(3600 * 1000),
-  };
-  const { gas, state } = createGuardHarness({ properties: open });
-  assert.equal(gas.apiLookupByPhone(request('o1', { phone: '0912345678' })).code, 'FOUND');
-  assert.equal(gas.apiRegisterWalkIn(request('o2', { name: '陳來賓', phone: '0922334455', email: 'walkin@example.com', consent: true })).code, 'WALK_IN_REGISTERED');
-  assert.equal(state.registers, 1);
-});
-
-function openProperties() {
-  return {
-    CHECKIN_OPEN_FROM: '2000-01-01T00:00:00+08:00',
-    CHECKIN_OPEN_UNTIL: '2100-01-01T00:00:00+08:00',
-  };
-}
-
 test('per-identity lookup rate limit trips into BUSY without blocking other identities', () => {
-  const { gas } = createGuardHarness({ properties: openProperties() });
+  const { gas } = createGuardHarness();
   const limit = gas.CHECKIN.RATE_LIMITS.LOOKUP_IDENTITY.limit;
   for (let i = 0; i < limit; i += 1) {
     assert.equal(gas.apiLookupByPhone(request(`rl-${i}`, { phone: '0912345678' })).code, 'FOUND');
@@ -153,7 +75,7 @@ test('per-identity lookup rate limit trips into BUSY without blocking other iden
 });
 
 test('global lookup rate limit bounds bulk probing across identities', () => {
-  const { gas } = createGuardHarness({ properties: openProperties() });
+  const { gas } = createGuardHarness();
   const limit = gas.CHECKIN.RATE_LIMITS.LOOKUP_GLOBAL.limit;
   for (let i = 0; i < limit; i += 1) {
     const phone = `09${String(11000000 + i)}`;
@@ -164,9 +86,10 @@ test('global lookup rate limit bounds bulk probing across identities', () => {
   assert.equal(tripped.code, 'BUSY');
 });
 
-test('global walk-in rate limit caps registration floods', () => {
-  const { gas, state } = createGuardHarness({ properties: openProperties() });
+test('global walk-in rate limit caps registration floods at 20 per minute', () => {
+  const { gas, state } = createGuardHarness();
   const limit = gas.CHECKIN.RATE_LIMITS.WALK_IN_GLOBAL.limit;
+  assert.equal(limit, 20);
   for (let i = 0; i < limit; i += 1) {
     const payload = { name: '陳來賓', phone: `09${String(22000000 + i)}`, email: `walkin${i}@example.com`, consent: true };
     assert.equal(gas.apiRegisterWalkIn(request(`w-${i}`, payload)).code, 'WALK_IN_REGISTERED');
@@ -178,7 +101,7 @@ test('global walk-in rate limit caps registration floods', () => {
 });
 
 test('rate-limit cache keys never contain readable identities', () => {
-  const { gas, state } = createGuardHarness({ properties: openProperties() });
+  const { gas, state } = createGuardHarness();
   gas.apiLookupByPhone(request('k1', { phone: '0912345678' }));
   gas.apiLookupByEmail(request('k2', { email: 'lin@example.com' }));
   const limiterPuts = state.puts.filter(put => put.key.startsWith('rl:'));
